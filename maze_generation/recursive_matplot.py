@@ -51,7 +51,6 @@ class RecursiveBacktrackMaze:
                 self.grid[(x, y)][direction] = False
                 self.grid[(nx, ny)][OPPOSITE[direction]] = False
                 self.stack.append((nx, ny))
-                self.visited.add((nx, ny))
             else:
                 self.stack.pop()
 
