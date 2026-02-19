@@ -14,13 +14,13 @@ from matplotlib.widgets import Button
 # Config
 # -------------------------
 GRID_H, GRID_W = 12, 12
-WORDS = ["PYTHON", "HEAP", "TRIE", "SEARCH", "QUEUE"]
+WORDS = ["HEAP", "SENSORY", "ALLIGATOR","ARTIFICIAL", "QUEUEING"]
 ALLOW_REVERSE = True
 RNG_SEED = 42
 EMPTY = "."
 DIRS_HV = [(0, 1), (1, 0), (0, -1), (-1, 0)]   # E,S,W,N
 JITTER = 0.001                                  # tiny tiebreaker for equal overlap
-JUMP_AFTER_FOUND = False                        # keep False to show DFS backtracking
+JUMP_AFTER_FOUND = True                        # keep False to show DFS backtracking
 
 # -------------------------
 # Small helpers
@@ -78,6 +78,37 @@ def best_placement(grid, word):
 def heapify_min(arr):
     heapq.heapify(arr)
 
+def _sift_down_minheap(H, i, n, steps):
+    """Sift-down for a min-heap; records snapshots after swaps."""
+    while True:
+        l = 2*i + 1
+        r = 2*i + 2
+        smallest = i
+        if l < n and H[l][0] < H[smallest][0]:
+            smallest = l
+        if r < n and H[r][0] < H[smallest][0]:
+            smallest = r
+        if smallest == i:
+            break
+        H[i], H[smallest] = H[smallest], H[i]
+        steps.append((f"sift-down swap: i={i} <-> {smallest}", list(H)))
+        i = smallest
+
+def heapify_with_snapshots(arr):
+    """
+    Manual heapify that mimics heapq.heapify, but records snapshots.
+    Assumes arr is a list of tuples (key, item) where smaller key = higher priority (min-heap).
+    """
+    H = list(arr)
+    steps = [("start (unsorted array)", list(H))]
+    n = len(H)
+    # Bottom-up heapify
+    for i in range(n//2 - 1, -1, -1):
+        steps.append((f"sift-down from i={i}", list(H)))
+        _sift_down_minheap(H, i, n, steps)
+    steps.append(("heapify complete (heap property satisfied)", list(H)))
+    return H, steps
+
 def pop_with_snapshots(minheap):
     """
     Teaching delete-max on a MIN-heap that stores (-len, word).
@@ -125,7 +156,8 @@ class HeapGenerator:
     def __init__(self, words):
         self.words = list(words)
         self.grid = empty_grid(GRID_H, GRID_W)
-        self.phase = "build_heap"
+        self.phase = "show_pq_array"
+        self.heap_build_demo =[]
         self.heap_arr = []           # ACTUAL heap array of (-len, word)
         self.current = None          # (word, best)
         self.remaining = list(words) # just the *names* left to place
@@ -141,42 +173,100 @@ class HeapGenerator:
         cp.remaining = list(self.remaining)
         cp.heap_delete_demo = copy.deepcopy(self.heap_delete_demo)
         cp.heap_snapshot = copy.deepcopy(self.heap_snapshot)
+        cp.heap_build_demo = copy.deepcopy(self.heap_build_demo)
         return cp
 
     def step(self):
-        if self.phase == "build_heap":
-            self.heap_arr = [(-len(w), w) for w in self.words]
-            heapify_min(self.heap_arr)
-            self.phase = "pop_word"
-            self.heap_snapshot = None
-            return {"state":"build_heap", "grid":self.grid, "remaining":self.remaining,
-                    "msg":"Step 1: built max-heap by word length (root = longest)",
-                    "heap_array": list(self.heap_arr)}
 
+        if self.phase == "show_pq_array":
+            # Build initial unsorted "priority queue array" (not a heap yet)
+            self.heap_arr = [(-len(w), w) for w in self.words]  # negative length for max-heap behavior
+            # Heapify with snapshots so students see how it rearranges
+            heapified, steps = heapify_with_snapshots(self.heap_arr)
+            self.heap_build_demo = steps[:]
+            self.heap_arr = heapified[:]
+            self.phase = "show_heapify"
+            label, arr = self.heap_build_demo.pop(0)
+            return {
+                "state": "heapify_demo", 
+                "pq_msg":f"Heapify: {label}",
+                "heap_msg":"",
+                "grid": self.grid,
+                "remaining": self.remaining,
+                "heap_array": arr,
+                "heap_view": "array",
+                "heap_array_view": arr,
+            }
+
+        if self.phase == "show_heapify":
+            if not self.heap_build_demo:
+                self.phase = "pop_word"
+                return {
+                    "state": "heapify_done",
+                    "grid": self.grid,
+                    "remaining": self.remaining,
+                    "pq_msg": "Heap ready → now show heap tree and begin popping longest word",
+                    "heap_msg": "",
+                    "heap_array": list(self.heap_arr),
+                    "heap_view": "tree",
+                    "heap_array_view": list(self.heap_arr),
+                }
+            label, arr = self.heap_build_demo.pop(0)
+            return {
+                "state": "heapify_demo",
+                "grid": self.grid,
+                "remaining": self.remaining,
+                "pq_msg": f"Heapify: {label}",
+                "heap_msg": "",
+                "heap_array": arr,
+                "heap_view": "array",
+                "heap_array_view": arr,
+            }
+        
         if self.phase == "pop_word":
             if not self.heap_arr:
                 self.phase = "fill"
-                self.heap_snapshot = None
                 return {"state":"pop_word", "grid":self.grid, "remaining":self.remaining,
-                        "msg":"Heap empty → fill random letters", "heap_array": []}
+                        "pq_msg":"Heap empty → fill random letters",
+                        "heap_msg":"",
+                        "heap_view":"tree",
+                        "heap_array": [] ,
+                        "heap_array_view": []}
 
-            w, steps = pop_with_snapshots(self.heap_arr)   # updates self.heap_arr in place
+            # IMPORTANT: get the delete snapshots, but DO NOT “announce” final heap yet
+            w, steps = pop_with_snapshots(self.heap_arr)  # this mutates heap_arr to AFTER pop
             self.current = (w, None)
-            self.heap_delete_demo = steps[:]
+            self.heap_delete_demo = steps[:]              # steps include 'heap start', 'swap', 'remove', 'sift...', 'restored'
             self.phase = "show_delete"
-            return {"state":"pop_word", "grid":self.grid, "remaining":self.remaining,
-                    "msg":f"Step 2: pop root → '{w}' (highest priority)", "heap_array": list(self.heap_arr)}
+
+            # show the FIRST snapshot immediately (heap before pop)
+            label, arr = self.heap_delete_demo.pop(0)
+            return {"state":"heap_demo", "grid":self.grid, "remaining":self.remaining,
+                    "pq_msg":f"Delete-max demo: {label}",
+                    "heap_msg":"",
+                    "heap_view":"tree",
+                    "heap_array": arr,
+                    "heap_array_view": arr}
+
 
         if self.phase == "show_delete":
             if not self.heap_delete_demo:
-                self.heap_snapshot = None
+                # deletion demo finished, now choose placement for the popped word
                 self.phase = "choose_placement"
-            else:
-                label, arr = self.heap_delete_demo.pop(0)
-                self.heap_snapshot = arr[:]  # draw this exact array snapshot
-                return {"state":"heap_demo", "grid":self.grid, "remaining":self.remaining,
-                        "msg":f"Step 2a: {label}", "heap_array": self.heap_snapshot}
-            # fallthrough next step
+                return {"state":"heap_demo_done", "grid":self.grid, "remaining":self.remaining,
+                        "pq_msg":f"Deletion complete — next place '{self.current[0]}'",
+                        "heap_msg":"",
+                        "heap_view":"tree",
+                        "heap_array": list(self.heap_arr),
+                        "heap_array_view": list(self.heap_arr)}
+
+            label, arr = self.heap_delete_demo.pop(0)
+            return {"state":"heap_demo", "grid":self.grid, "remaining":self.remaining,
+                    "pq_msg":f"Delete-max demo: {label}",
+                    "heap_msg":"",
+                    "heap_view":"tree",
+                    "heap_array": arr,
+                    "heap_array_view": arr}
 
         if self.phase == "choose_placement":
             w, _ = self.current
@@ -186,12 +276,12 @@ class HeapGenerator:
             if best is None:
                 self.phase = "commit"
                 return {"state":"choose_placement", "grid":self.grid, "remaining":self.remaining,
-                        "highlight":None, "msg":f"Step 3: evaluate placements → none valid for '{w}'",
+                        "highlight":None, "pq_msg":f"Step 3: evaluate placements → none valid for '{w}'", "heap_msg":"",
                         "heap_array": list(self.heap_arr)}
             _, ov, cells, _d, _v = best
             self.phase = "commit"
             return {"state":"choose_placement", "grid":self.grid, "remaining":self.remaining,
-                    "highlight":cells, "msg":f"Step 3: evaluate placements → choose max overlap = {ov}",
+                    "highlight":cells, "pq_msg":f"Step 3: evaluate placements → choose max overlap = {ov}", "heap_msg":"",
                     "heap_array": list(self.heap_arr)}
 
         if self.phase == "commit":
@@ -207,18 +297,18 @@ class HeapGenerator:
             self.heap_snapshot = None
             self.phase = "pop_word"
             return {"state":"commit", "grid":self.grid, "remaining":self.remaining,
-                    "msg":note, "heap_array": list(self.heap_arr)}
+                    "pq_msg":note, "heap_array": list(self.heap_arr),"heap_msg":"",}
 
         if self.phase == "fill":
             fill_random(self.grid)
             self.phase = "done"
             return {"state":"fill", "grid":self.grid, "remaining":self.remaining,
-                    "msg":"Step 5: filled remaining cells with random letters",
+                    "pq_msg":"Step 5: filled remaining cells with random letters","heap_msg":"",
                     "heap_array": list(self.heap_arr)}
 
         if self.phase == "done":
             return {"state":"done", "grid":self.grid, "remaining":self.remaining,
-                    "msg":"Generation complete", "heap_array": list(self.heap_arr)}
+                    "pq_msg":"Generation complete","heap_msg":"","heap_array": list(self.heap_arr)}
 
 # -------------------------
 # Trie (tree) + DFS solver (global, single pass)
@@ -408,7 +498,7 @@ class Viz:
 
     def draw_grid(self, grid, title="", path=None, found=None, probe=None):
         ax = self.ax_grid; ax.clear()
-        ax.set_title(title, fontsize=12)
+        # ax.set_title(title, fontsize=12)
         ax.set_xlim(0, GRID_W); ax.set_ylim(0, GRID_H)
         ax.set_xticks([]); ax.set_yticks([])
         for r in range(GRID_H):
@@ -426,6 +516,56 @@ class Viz:
             ax.add_patch(Rectangle((pc, GRID_H-1-pr), 1, 1, fill=False, linewidth=3, edgecolor="red"))
         self.fig.canvas.draw_idle()
 
+    def draw_heap_array_blocks(self, heap_array, footnote=""):
+        """
+        Draw heap as a 1D array of blocks: [ (priority, word), ... ]
+        heap_array expected to be list of (score, word) where score may be negative.
+        """
+        ax = self.ax_trie
+        ax.clear()
+        ax.axis('off')
+        ax.set_title("Priority Queue — array view", fontsize=12)
+
+        arr = list(heap_array) if heap_array is not None else []
+        n = len(arr)
+
+        if n == 0:
+            ax.text(0.5, 0.5, "(empty)", ha='center', va='center')
+            if footnote:
+                ax.text(0.02, 0.04, footnote, transform=ax.transAxes, fontsize=10)
+            self.fig.canvas.draw_idle()
+            return
+
+        # Layout parameters
+        left = 0.03
+        right = 0.97
+        width = right - left
+        box_w = width / n
+        y0 = 0.55
+        h = 0.25
+
+        for i, item in enumerate(arr):
+            score, w = item
+            pr = -score  # because you store (-len, word)
+            x0 = left + i * box_w
+
+            # block
+            ax.add_patch(Rectangle((x0, y0), box_w*0.95, h, fill=False, linewidth=2))
+
+            # index
+            ax.text(x0 + box_w*0.475, y0 + h + 0.06, f"[{i}]",
+                    ha='center', va='center', fontsize=10)
+
+            # tuple text
+            ax.text(x0 + box_w*0.475, y0 + h*0.5, f"({pr}, {w})",
+                    ha='center', va='center', fontsize=10, family='monospace')
+
+        if footnote:
+            ax.text(0.02, 0.04, footnote, transform=ax.transAxes, fontsize=10)
+
+        self.fig.canvas.draw_idle()
+
+
     def draw_heap_tree(self, remaining_words, footnote="", heap_array=None):
         ax = self.ax_trie; ax.clear(); ax.axis('off')
         ax.set_title("Heap — tree view", fontsize=12)
@@ -438,10 +578,16 @@ class Viz:
             disp = [(-s, w) for (s, w) in arr]   # (length, word)
             n = len(disp); depth = max(1, math.ceil(math.log2(n+1)))
             xs, ys = [], []
+            TOP = 0.95
+            BOTTOM = 0.25   # reserve lower area for footnote
+
             for i in range(n):
                 d = int(math.log2(i+1))
-                pos = i - (2**d - 1); level_n = 2**d
-                xs.append((pos + 1)/(level_n + 1)); ys.append(1.0 - d/depth)
+                pos = i - (2**d - 1)
+                level_n = 2**d
+                xs.append((pos + 1)/(level_n + 1))
+                ys.append(TOP - (TOP - BOTTOM) * (d / depth))
+
             for i in range(1, n):
                 p = (i-1)//2; ax.plot([xs[p], xs[i]], [ys[p], ys[i]], color="0.7")
             for i, (score, w) in enumerate(disp):
@@ -536,6 +682,55 @@ class Viz:
         ax.text(0.02, 0.9, "\n".join(lines[:18]), va="top", family="monospace", fontsize=10)
         self.fig.canvas.draw_idle()
 
+    def draw_pq_array_in_log(self, heap_array, title="PQ array", footnote="", prev_footnote=""):
+        ax = self.ax_log
+        ax.clear()
+        ax.axis('off')
+        ax.set_title(title, fontsize=12)
+
+        arr = list(heap_array) if heap_array is not None else []
+        n = len(arr)
+
+        if n == 0:
+            ax.text(0.5, 0.5, "(empty)", ha='center', va='center')
+        else:
+            left, right = 0.02, 0.98
+            width = right - left
+            box_w = width / n
+            y0 = 0.45
+            h = 0.35
+
+            for i, (score, w) in enumerate(arr):
+                pr = -score
+                x0 = left + i * box_w
+                ax.add_patch(Rectangle((x0, y0), box_w*0.95, h, fill=False, linewidth=2))
+                ax.text(x0 + box_w*0.475, y0 + h + 0.08, f"[{i}]",
+                        ha='center', va='center', fontsize=9)
+                ax.text(x0 + box_w*0.475, y0 + h*0.5, f"({pr}, {w})",
+                        ha='center', va='center', fontsize=9, family='monospace')
+
+        # --- NEW: previous + current message lines ---
+        # previous line (muted gray)
+        if prev_footnote:
+            ax.text(
+                0.02, 0.14, prev_footnote,
+                transform=ax.transAxes,
+                fontsize=10, color="0.55"
+            )
+
+        # current line (bigger + attention color)
+        if footnote:
+            ax.text(
+                0.02, 0.06, footnote,
+                transform=ax.transAxes,
+                fontsize=12, color="tab:orange",
+                fontweight="bold"
+            )
+
+        self.fig.canvas.draw_idle()
+
+
+
 # -------------------------
 # Controller (state + undo history)
 # -------------------------
@@ -608,6 +803,11 @@ class Controller:
             "solver": (solver.clone() if solver else None),
             "gen_done": gen_done,
             "found": copy.deepcopy(found),
+            "heap_view": self.refs.get("heap_view", "tree"),
+            "heap_array_view": copy.deepcopy(self.refs.get("heap_array_view")),
+            "heap_msg": self.refs.get("heap_msg",""),
+            "pq_msg": self.refs.get("pq_msg",""),
+            "prev_pq_msg": self.refs.get("prev_pq_msg", ""),
         }
 
     def _restore_snapshot(self, snap):
@@ -616,22 +816,30 @@ class Controller:
         self.refs["solver"] = snap["solver"]
         self.refs["gen_done"] = snap["gen_done"]
         self.refs["found"] = snap["found"]
+        self.refs["prev_pq_msg"] = snap.get("prev_pq_msg","")
         # Redraw appropriate frame
         viz = self.refs["viz"]
         gen = self.refs["gen"]; solver = self.refs["solver"]; found_cells = self.refs["found"]
         if self.mode == "generate":
-            viz.draw_grid(gen.grid, title="Generate")
-            viz.draw_heap_tree(gen.remaining, footnote="", heap_array=list(gen.heap_arr))
-            viz.draw_dfs_log([], "", "")
-        else:
-            viz.draw_grid(gen.grid, title="Solve", found=found_cells)
-            if solver:
-                found_strings = []
-                for cw, cells in solver.found.items():
-                    s = "".join(gen.grid[r][c] for (r,c) in cells)
-                    found_strings += [s, s[::-1]]
-                viz.draw_trie_full(solver.trie, current_prefix=solver.pref, found_words=found_strings)
-                viz.draw_dfs_log(solver.stack, solver.pref, "")
+            viz.draw_grid(gen.grid, title="")
+
+            hv = snap.get("heap_view", "tree")
+
+            # restore heap panel (ax_trie)
+            if hv == "array":
+                viz.draw_heap_array_blocks(snap.get("heap_array_for_trie", []),
+                                        footnote=snap.get("heap_msg",""))
+            else:
+                viz.draw_heap_tree(gen.remaining,
+                                footnote=snap.get("heap_msg",""),
+                                heap_array=list(gen.heap_arr))
+
+            # restore PQ panel (ax_log)
+            viz.draw_pq_array_in_log(snap.get("heap_array_view", []),
+                                    title="PQ array",
+                                    footnote=snap.get("pq_msg",""),
+                                    prev_footnote=snap.get("prev_pq_msg",""),)
+
 
 # -------------------------
 # Runner
@@ -641,7 +849,8 @@ def run():
     viz = Viz()
     ctl = Controller(viz.fig)
     ctl.bind(viz)
-
+    prev_msg = ""
+    
     # initial state
     gen = HeapGenerator(WORDS)
     solver = None
@@ -651,8 +860,25 @@ def run():
     # draw initial and save snapshot
     viz.draw_grid(gen.grid, title="Generate — empty grid")
     viz.draw_heap_tree(gen.remaining, footnote="Click Step to begin (build heap)", heap_array=[])
-    viz.draw_dfs_log([], "", "")
-    ctl.set_state_refs({"gen": gen, "solver": solver, "gen_done": gen_done, "found": found_cells_total, "viz": viz})
+
+    initial_arr = [(-len(w), w) for w in WORDS]
+    viz.draw_pq_array_in_log(initial_arr,
+                         title="PQ array",
+                         footnote="Click Step to begin heapify",
+                         prev_footnote="")
+
+    
+    
+    
+    ctl.set_state_refs({
+    "gen": gen, "solver": solver, "gen_done": gen_done,
+    "found": found_cells_total, "viz": viz,
+    "heap_view": "tree",
+    "heap_array_view": initial_arr,
+    "heap_msg": "Click Step to begin",
+    "prev_pq_msg": prev_msg,
+    "pq_msg": info.get("pq_msg",""),
+    })
     ctl.history.append(ctl._make_snapshot())
 
     while True:
@@ -662,27 +888,73 @@ def run():
             random.seed(RNG_SEED)
             gen = HeapGenerator(WORDS); solver = None; gen_done = False
             found_cells_total = set()
+
+            # redraw initial state (same as first launch)
             viz.draw_grid(gen.grid, title="Generate — empty grid")
-            viz.draw_heap_tree(gen.remaining, footnote="Click Step to begin (build heap)", heap_array=[])
-            viz.draw_dfs_log([], "", "")
-            ctl.set_state_refs({"gen": gen, "solver": solver, "gen_done": gen_done, "found": found_cells_total, "viz": viz})
+            viz.draw_heap_tree(gen.remaining, footnote="Click Step to begin (heapify)", heap_array=[])
+
+            initial_arr = [(-len(w), w) for w in WORDS]   # unsorted PQ array (not heap yet)
+            viz.draw_pq_array_in_log(initial_arr, title="PQ array", footnote="Click Step to begin heapify")
+
+            # IMPORTANT: store full state so Undo works (PQ panel included)
+            ctl.set_state_refs({
+                "gen": gen, "solver": solver, "gen_done": gen_done,
+                "found": found_cells_total, "viz": viz,
+                "heap_view": "tree",
+                "heap_array_view": initial_arr,
+                "heap_msg": "Click Step to begin heapify",
+            })
+
             ctl.history = [ctl._make_snapshot()]
             ctl.restart = False
             continue
 
         # normal step
         if ctl.mode == "generate":
+            prev_msg = ctl.refs.get("pq_msg","") if hasattr(ctl, "refs") else ""
             info = gen.step()
-            viz.draw_grid(info["grid"], title=info.get("msg",""),
-                          path=info.get("highlight"))
-            viz.draw_heap_tree(info["remaining"], footnote=info.get("msg",""),
-                               heap_array=info.get("heap_array"))
-            viz.draw_dfs_log([], "", "")
+            viz.draw_grid(
+            info.get("grid", gen.grid),
+            title="", 
+            path=info.get("highlight"),
+            found=None,
+            probe=None
+        )
+        
+            # --- draw heap panel (ax_trie) ---
+            if info.get("heap_view") == "array":
+                viz.draw_heap_array_blocks(info.get("heap_array", []),
+                                        footnote=info.get("heap_msg",""))
+            else:
+                viz.draw_heap_tree(info.get("remaining", []),
+                                footnote=info.get("heap_msg",""),
+                                heap_array=info.get("heap_array"))
+
+            # --- draw PQ panel (ax_log) ---
+            viz.draw_pq_array_in_log(
+                info.get("heap_array_view", info.get("heap_array", [])),
+                title="PQ array",
+                footnote=info.get("pq_msg",""),
+                prev_footnote=prev_msg
+            )
+
             if info["state"] == "done":
                 gen_done = True
 
             # save snapshot AFTER drawing
-            ctl.set_state_refs({"gen": gen, "solver": solver, "gen_done": gen_done, "found": found_cells_total, "viz": viz})
+            ctl.set_state_refs({
+                "gen": gen, "solver": solver, "gen_done": gen_done,
+                "found": found_cells_total, "viz": viz,
+
+                "heap_view": info.get("heap_view","tree"),
+                "heap_array_view": info.get("heap_array_view", info.get("heap_array", [])),
+
+                "pq_msg": info.get("pq_msg",""),
+                "prev_pq_msg": prev_msg,
+
+                "heap_msg": info.get("heap_msg",""),
+                "heap_array_for_trie": info.get("heap_array", []),
+            })
             ctl.history.append(ctl._make_snapshot())
             continue
 
