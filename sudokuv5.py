@@ -18,7 +18,7 @@ STACK_TRUE_COLOR  = 'tab:green'
 STACK_FALSE_COLOR = 'tab:red'
 STACK_NEUTRAL     = 'black'
 
-COMMENT_COLOR = '#6A6A6A'
+COMMENT_COLOR = '#708238'
 PC_FONTSIZE_BASE  = 12
 
 # >>> Call stack spacing controls:
@@ -52,21 +52,26 @@ def select_cell_first_empty(board):
                 return (r, c)
     return None
 
-def check_reason(board, r, c, d):
+def check_reason(board, r, c, d):  
+    # #checks whether placing digit d at position (r,c) is valid. 
+    # returns (True, None) if valid, (False, reason) if invalid.
+    
     for j in range(9):
-        if board[r][j] == d:
+        if board[r][j] == d: #check row by trying out all columns in fixed row
             return False, {'rule':'row', 'conflicts':[(r,j)]}
     for i in range(9):
-        if board[i][c] == d:
+        if board[i][c] == d: #check column by trying out all rows in fixed column
             return False, {'rule':'col', 'conflicts':[(i,c)]}
-    br, bc = (r//3)*3, (c//3)*3
+    
+    br, bc = (r//3)*3, (c//3)*3 #identify beginning row and column for the subsquare. // is a floor operator.
     for i in range(br, br+3):
-        for j in range(bc, bc+3):
+        for j in range(bc, bc+3): #iterate columns then row first
             if board[i][j] == d:
                 return False, {'rule':'box', 'conflicts':[(i,j)]}
     return True, None
 
-def candidates_for(board, r, c):
+def candidates_for(board, r, c): 
+    #test number from 1 to 9, and only keep them if they satisfy the constraints, check_reason[0] = true
     return [d for d in range(1,10) if check_reason(board, r, c, d)[0]]
 
 # ---------- Event generator (unchanged recursive; stable) ----------
@@ -77,14 +82,16 @@ def solve_steps(board, select_cell=select_cell_first_empty):
         if pos is None:
             yield {'type':'base_case','k':k,'depth':depth}
             yield {'type':'solved','k':k,'depth':depth}
-            return True
+            return
 
         r,c = pos
         yield {'type':'select','cell':(r,c),'k':k,'depth':depth}
         cands = candidates_for(board, r, c)
+        yield {'type':'build_candidates','cell':(r,c), 'cands':cands,'k':k,'depth':depth}
         yield {'type':'candidates','cell':(r,c),'cands':cands,'k':k,'depth':depth}
-
-        for d in range(1,10):
+        yield {'type':'init_candidates', 'cell':(r,c), 'cands':cands, 'next_idx':0, 'k':k, 'depth':depth}
+        for idx, d in enumerate(cands):
+            yield {'type':'advance_candidate_index','cell':(r,c), 'digit': d, 'next_idx':idx, 'k':k, 'depth':depth}
             ok, reason = check_reason(board, r, c, d)
             yield {'type':'try','cell':(r,c),'digit':d,'valid':ok,'reason':reason,'k':k,'depth':depth}
             if not ok:
@@ -92,7 +99,7 @@ def solve_steps(board, select_cell=select_cell_first_empty):
 
             board[r][c] = d
             yield {'type':'place','cell':(r,c),'digit':d,'k':k-1,'depth':depth}
-
+            yield {'type':'push_decision', 'cell':(r,c), 'digit':d, 'cands':cands, 'next_idx':idx+1, 'k':k-1,'depth':depth}
             yield {'type':'recurse_enter','k':k-1,'depth':depth+1}
             outcome = None
             for ev in _solve(depth+1):
@@ -105,6 +112,7 @@ def solve_steps(board, select_cell=select_cell_first_empty):
                 return True
 
             board[r][c] = 0
+            yield {'type':'reset_cell', 'cell':(r,c), 'k':count_empty(board), 'depth':depth}
             yield {'type':'backtrack','cell':(r,c),'k':count_empty(board),'depth':depth}
 
         yield {'type':'dead_end','cell':(r,c),'cands':cands,'k':k,'depth':depth}
@@ -119,7 +127,6 @@ class SudokuTeachViz:
     def __init__(self, puzzle):
         self.orig  = copy.deepcopy(puzzle)
         self.board = copy.deepcopy(puzzle)
-
         # NEW: mode cycle (purely visual, solver stays the same for stability)
         self.mode_cycle = ['Recur', 'While']
         self.mode_idx   = 0
@@ -159,33 +166,37 @@ class SudokuTeachViz:
         self.pc_sets = {
             'Recur': [
                 "solve(board):",
-                "  empty_count → count_empty_cells(board)",
-                "  if empty_count == 0: return True",
-                "  (row, col) → select_next_empty_cell(board)",
-                "  allowed → candidates_for_cell(board, row, col)",
-                "  for digit in allowed:",
-                "    if is_valid(board, row, col, digit):",
-                "      board[row][col] → digit                 # place guess",
-                "      if solve(board): return True            # recurse",
-                "      board[row][col] → 0                     # undo (backtrack)",
+                "   -- Base Case -- ",
+                "  (row, col) = select_next_empty_cell(board)",
+                "  if (row, col) == None: return True            # board solved",
+                "",
+                "  cands = candidates_for_cell(board, row, col)",
+                "",
+                "  for num in cands:",
+                "      board[row][col] = num                  # place guess on board",
+                "      -- Recursive Case -- ",
+                "      if solve(board):                       # recursive solve next cell",
+                "           return True            ",
+                "      else board[row][col] = 0               # reset & try next cand",
                 "  return False                                 # none worked",
             ],
 
             'While': [
-                "solve(board):",
-                "  decision_stack → []             # frames: (row, col, allowed, next_idx)",
+                "solve(board):                     # cand = candidates, idx = index", 
+                "  decision_stack = []             # entry: (row, col, cands, next_cand_idx)",
                 "  while count_empty_cells(board) > 0:",
-                "    (row, col) → select_next_empty_cell(board)",
-                "    allowed → candidates_for_cell(board, row, col); next_idx → 0",
-                "    while True:",
-                "      if next_idx == length(allowed):          # ran out → backtrack",
-                "        if decision_stack is empty: return False",
-                "        (row, col, allowed, next_idx) → pop(decision_stack); board[row][col] → 0; continue",
-                "      digit → allowed[next_idx]; next_idx → next_idx + 1",
-                "      if is_valid(board, row, col, digit):",
-                "        board[row][col] → digit                # place",
-                "        push(decision_stack, (row, col, allowed, next_idx))  # remember where to resume",
-                "        break                                   # move to next blank",
+                "       (row, col) = select_next_empty_cell(board)",
+                "       cands = candidates_for_cell(board, row, col); & next_cand_idx = 0",
+                "       while True:",
+                "       if next_cand_idx == len(cands):          # tried all candidates so backtrack",
+                "           if decision_stack is empty: return False   # unsolvable",
+                "              else pop(decision_stack);            # restore previous entry",
+                "              board[row][col] → 0; continue        # reset cell",
+                "      cand = cands[next_cand_idx]   # next_cand_idx is a pointer for the candidate list",       
+                "      next_cand_idx +=1",
+                "      board[row][col] = cand                # place guess",
+                "      push(decision_stack, (row, col, cands, next_cand_idx))  # remember where to resume",
+                "      break                                   # move to next blank",
                 "  return True                                   # solved",
             ],
         }
@@ -216,6 +227,7 @@ class SudokuTeachViz:
         self.draw_numbers()
 
         # Playback
+        self.finished = False
         self.events  = []
         self.history = []
         self.index = -1
@@ -225,6 +237,10 @@ class SudokuTeachViz:
 
         self._init_buttons_under_grid()
         self.new_run()
+    def set_k(self, k): #num_empty cells
+        if hasattr(self, 'k_text'):
+            self.k_text.set_text(f"k: {k}")
+            self.k_text.set_visible(False)
 
     # ---- Pseudocode drawing & highlighting
     def _draw_pseudocode(self):
@@ -256,7 +272,7 @@ class SudokuTeachViz:
         self.pc_dy = min(0.0666, (self.pc_y0 - bottom_margin) / max(1, n))
         for i, line in enumerate(lines):
             y = self.pc_y0 - i*self.pc_dy
-            color = "#C23636" if '#' in line else 'black'
+            color = COMMENT_COLOR if '#' in line else 'black'
             t = self.ax_pc.text(0.02, y, line, fontsize=pc_fs, family='monospace',
                                 ha='left', va='center', color=color)
             self.pc_texts.append(t)
@@ -343,8 +359,10 @@ class SudokuTeachViz:
     # ---- replace the whole highlight_pc() with:
     def highlight_pc(self, idx):
         # reset all text styles
-        for t in self.pc_texts:
-            t.set_color('black'); t.set_fontweight('normal')
+        for i, t in enumerate(self.pc_texts):
+            line = self.pc_sets.get(self.mode, self.pc_sets['Recur'])[i]
+            t.set_color(COMMENT_COLOR if '#' in line else 'black')
+            t.set_fontweight('normal')
 
         if idx is None or idx < 0 or idx >= len(self.pc_texts):
             self.pc_hl.set_visible(False)
@@ -379,6 +397,7 @@ class SudokuTeachViz:
         for t in getattr(self, "stack_drawn", []):
             t.remove()
         self.stack_drawn = []
+
         rows = self.stack_frames[-7:]
 
         if STACK_AUTO_FIT:
@@ -389,23 +408,64 @@ class SudokuTeachViz:
         else:
             y0, dy = STACK_Y0, STACK_DY
 
+        # ---- WHILE MODE: show decision_stack style ----
+        if self.mode == 'While':
+            self.stack_header.set_text("Decision stack (bottom = root):")
+
+            for i, fr in enumerate(reversed(rows)):
+                y = y0 - i * dy
+
+                r = fr.get('r', 0) + 1
+                c = fr.get('c', 0) + 1
+                cands = fr.get('cands', [])
+                next_idx = fr.get('next_idx', 0)
+
+                disp = f"[{len(rows)-1-i}] (r{r},c{c}, cands={cands}, next_idx={next_idx})"
+
+                self.stack_drawn.append(
+                    self.ax_stack.text(
+                        0.02, y, disp,
+                        fontsize=STACK_FONTSIZE,
+                        family='monospace',
+                        ha='left', va='center',
+                        color=STACK_NEUTRAL
+                    )
+                )
+
+            self.fig.canvas.draw_idle()
+            return
+
+        # ---- RECUR MODE: original recursive call stack ----
+        self.stack_header.set_text("Call stack (bottom = root):")
+
         for i, fr in enumerate(reversed(rows)):
-            y = y0 - i*dy
-            d = fr.get('d'); ret = fr.get('ret')
+            y = y0 - i * dy
+            d = fr.get('d')
+            ret = fr.get('ret')
             disp = f"[{fr['depth']}] r{fr['r']+1},c{fr['c']+1} = {'?' if d is None else d}"
             color = STACK_NEUTRAL
-            if ret is True:  disp += "  ← True";  color = STACK_TRUE_COLOR
-            if ret is False: disp += "  ← False"; color = STACK_FALSE_COLOR
-            self.stack_drawn.append(
-                self.ax_stack.text(0.02, y, disp, fontsize=STACK_FONTSIZE,
-                                   family='monospace', ha='left', va='center', color=color)
-            )
-        self.fig.canvas.draw_idle()
+            if ret is True:
+                disp += "  ← True"
+                color = STACK_TRUE_COLOR
+            if ret is False:
+                disp += "  ← False"
+                color = STACK_FALSE_COLOR
 
-    def set_k(self, k): self.k_text.set_text(f"k: {k}")
+            self.stack_drawn.append(
+                self.ax_stack.text(
+                    0.02, y, disp,
+                    fontsize=STACK_FONTSIZE,
+                    family='monospace',
+                    ha='left', va='center',
+                    color=color
+                )
+            )
+
+        self.fig.canvas.draw_idle()
 
     # ---- State/reset ----
     def reset_visual_state_only(self):
+        self.finished = False
         self.board = copy.deepcopy(self.orig)
         self.draw_numbers()
         self.set_cell_highlight(None)
@@ -428,60 +488,173 @@ class SudokuTeachViz:
 
         # Map events to an approximate line index for each pseudocode
         if self.mode == 'Recur':
-            pc_map = {'base_case':4,'solved':4,'select':7,'candidates':8,'try':10,'place':11,
-                      'recurse_enter':13,'recurse_return':13,'backtrack':15,'dead_end':15}
+            pc_map = {'base_case':3,'solved':3,'select':2,'build_candidates':5,'candidates':5,'try':99,'place':8,
+                      'recurse_enter':10,'recurse_return':13,'backtrack':12,'dead_end':13}
         elif self.mode == 'While':
-            pc_fs = PC_FONTSIZE_BASE - 5
-            pc_map = {'base_case':0,'solved':0,'select':3,'candidates':4,'try':16,'place':17,
-                      'recurse_enter':0,'recurse_return':11,'backtrack':11,'dead_end':9}
+            pc_map = {'base_case':15,'solved':15,'select':3,'build_candidates':4,'candidates':4,'init_candidates':4, 'advance_candidate_index':10, 'try':99,'place':12,
+                      'push_decision':13, 'recurse_enter':14,'recurse_return':8, 'reset_cell':9,'backtrack':9,'dead_end':6}
 
         pc_idx = pc_map.get(et, None)
+        # ------------------ Recurs Mode -------------------------------------------
+        if self.mode == 'Recur':
+            if et == 'base_case':
+                self.set_status("BASE CASE reached", "k == 0 → no empty cells remain.")
+            elif et == 'solved':
+                self.set_status("Solved!", "All cells filled consistently.")
+            elif et == 'select':
+                r,c = event['cell']
+                self.set_status(f"Select next empty cell → r{r+1}, c{c+1}",
+                                "We found a position to fill (problem shrinks by one cell).")
+            elif et == 'build_candidates':
+                r, c = event['cell']
+                cands = event['cands']
+                self.set_status(
+                    f"Build candidate list for r{r+1}, c{c+1}",
+                    f"Check digits 1–9 against constraints → valid candidates: {cands}."
+                )
+            elif et == 'candidates':
+                r,c = event['cell']; cands = event['cands']
+                self.set_status(f"Candidates for r{r+1}, c{c+1}: {cands}",
+                            "Digits allowed by row, column, and 3×3 box rules.")
+            
+            elif et == 'try':
+                r,c = event['cell']; d = event['digit']
+                if event['valid']:
+                    self.set_status(f"Try {d} at r{r+1}, c{c+1} ✓ valid",
+                                    "No conflicts found → we may place and continue.")
+                else:
+                    reason = event['reason']; cells = reason['conflicts']
+                    where = ", ".join([f"(r{ri+1},c{cj+1})" for (ri, cj) in cells])
+                    self.set_status(f"Try {d} at r{r+1}, c{c+1} ✗ invalid",
+                                f"Violates {reason['rule']}: {where}.")
+            elif et == 'place':
+                r,c = event['cell']; d = event['digit']
+                self.set_status(f"Place {d} at r{r+1}, c{c+1}",
+                            "Commit choice; solve the smaller subproblem.")
 
-        if et == 'base_case':
-            self.set_status("BASE CASE reached", "k == 0 → no empty cells remain.")
-        elif et == 'solved':
-            self.set_status("Solved!", "All cells filled consistently.")
-        elif et == 'select':
-            r,c = event['cell']
-            self.set_status(f"Select next empty cell → r{r+1}, c{c+1}",
-                            "We found a position to fill (problem shrinks by one cell).")
-        elif et == 'candidates':
-            r,c = event['cell']; cands = event['cands']
-            self.set_status(f"Candidates for r{r+1}, c{c+1}: {cands}",
-                        "Digits allowed by row, column, and 3×3 box rules.")
-        
-        elif et == 'try':
-            r,c = event['cell']; d = event['digit']
-            if event['valid']:
-               self.set_status(f"Try {d} at r{r+1}, c{c+1} ✓ valid",
-                                "No conflicts found → we may place and continue.")
-            else:
-                reason = event['reason']; cells = reason['conflicts']
-                where = ", ".join([f"(r{ri+1},c{cj+1})" for (ri, cj) in cells])
-                self.set_status(f"Try {d} at r{r+1}, c{c+1} ✗ invalid",
-                               f"Violates {reason['rule']}: {where}.")
-        elif et == 'place':
-            r,c = event['cell']; d = event['digit']
-            self.set_status(f"Place {d} at r{r+1}, c{c+1}",
-                        "Commit choice; solve the smaller subproblem.")
+            elif et == 'recurse_enter':
+                if self.mode == 'Recur':
+                    self.set_status("RECURSIVE CALL", "Solve the smaller subproblem.")
+                elif self.mode == 'While':
+                    self.set_status("Push frame (conceptually)", "Same effect as descending once.")
+            elif et == 'recurse_return':
+                ok = event.get('ok', False)
+                self.set_status("Return step",
+                                "→ success bubbles up" if ok else "→ dead end, try next candidate")
+            elif et == 'backtrack':
+                r,c = event['cell']
+                self.set_status(f"Backtrack: clear r{r+1}, c{c+1}",
+                                "Undo the last placement; explore other options.")
+            elif et == 'dead_end':
+                r,c = event['cell']; cands = event['cands']
+                self.set_status(f"Dead end at r{r+1}, c{c+1}",
+                                f"No candidate leads to a solution (legal set was {cands}).")
+        # ------------------ While Mode -------------------------------------------
+        elif self.mode == 'While':
+            if et == 'base_case':
+                self.set_status("Loop Termination reached", "No empty cells remain, loop stops.")
+            elif et == 'solved':
+                self.set_status("Solved!", "All cells filled consistently.")
+            elif et == 'select':
+                r,c = event['cell']
+                self.set_status(f"Select next empty cell → r{r+1}, c{c+1}",
+                                "Loop scans board and chooses next empty cell.")
+            elif et == 'build_candidates':
+                r, c = event['cell']
+                cands = event['cands']
+                self.set_status(
+                    f"Build candidate list for r{r+1}, c{c+1}",
+                    f"Scan digits 1–9 using Sudoku rules. Valid candidates are {cands}."
+                )
+            elif et == 'candidates':
+                r,c = event['cell']; cands = event['cands']
+                self.set_status(f"Candidates for r{r+1}, c{c+1}: {cands}",
+                            "Build candidate list for cell before iterating through.")
+            elif et == 'init_candidates':
+                r, c = event['cell']
+                cands = event['cands']
+                next_idx = event['next_idx']
+                if self.mode == 'While':
+                    self.set_status(
+                        f"Initialize candidate list at r{r+1}, c{c+1}",
+                        f"Set cands = {cands} and next_cand_idx = {next_idx}."
+                    )
+                else:
+                    self.set_status(
+                        f"Candidates ready for r{r+1}, c{c+1}",
+                        f"Available candidates are {cands}."
+                    )
+            elif et == 'advance_candidate_index':
+                r, c = event['cell']
+                d = event['digit']
+                idx = event['next_idx']
+                if self.mode == 'While':
+                    self.set_status(
+                        f"Read candidate index {idx} at r{r+1}, c{c+1}",
+                        f"Take cand = {d} from cands[{idx}] for checking."
+                    )
+                else:
+                    self.set_status(
+                        f"Try next candidate {d} at r{r+1}, c{c+1}",
+                        "Proceed to validate this candidate."
+                    )
+            elif et == 'try':
+                r,c = event['cell']; d = event['digit']
+                if event['valid']:
+                    self.set_status(f"Check {d} at r{r+1}, c{c+1} ✓ valid",
+                                    "Candidate is valid, place guess.")
+                else:
+                    reason = event['reason']; cells = reason['conflicts']
+                    where = ", ".join([f"(r{ri+1},c{cj+1})" for (ri, cj) in cells])
+                    self.set_status(f"Try {d} at r{r+1}, c{c+1} ✗ invalid",
+                                f"Violates {reason['rule']}: {where}.")
+            elif et == 'place':
+                r,c = event['cell']; d = event['digit']
+                self.set_status(f"Place {d} at r{r+1}, c{c+1}",
+                            "Store this decision in stack and continue to next cell.")
+            elif et == 'push_decision':
+                r, c = event['cell']
+                d = event['digit']
+                next_idx = event['next_idx']
+                if self.mode == 'While':
+                    self.set_status(
+                        f"Push decision for r{r+1}, c{c+1}",
+                        f"Store placed value {d} and resume later from next_cand_idx = {next_idx}."
+                    )
+                else:
+                    self.set_status(
+                        f"Record placement at r{r+1}, c{c+1}",
+                        "Save the current decision before continuing."
+                )
+            elif et == 'recurse_enter':
+                    self.set_status("Continue loop", "Continue to next cell.")
 
-        elif et == 'recurse_enter':
-            if self.mode == 'Recur':
-                self.set_status("RECURSIVE CALL", "Solve the smaller subproblem.")
-            elif self.mode == 'While':
-                self.set_status("Push frame (conceptually)", "Same effect as descending once.")
-        elif et == 'recurse_return':
-            ok = event.get('ok', False)
-            self.set_status("Return step",
-                            "→ success bubbles up" if ok else "→ dead end, try next candidate")
-        elif et == 'backtrack':
-            r,c = event['cell']
-            self.set_status(f"Backtrack: clear r{r+1}, c{c+1}",
-                            "Undo the last placement; explore other options.")
-        elif et == 'dead_end':
-            r,c = event['cell']; cands = event['cands']
-            self.set_status(f"Dead end at r{r+1}, c{c+1}",
-                            f"No candidate leads to a solution (legal set was {cands}).")
+            elif et == 'recurse_return':
+                ok = event.get('ok', False)
+                self.set_status("Resume previous decision",
+                                "Current stored decisions remain valid" if ok else "→ dead end, return to previous stored decision, and try next candidate")
+                
+            elif et == 'reset_cell':
+                r, c = event['cell']
+                if self.mode == 'While':
+                    self.set_status(
+                        f"Reset r{r+1}, c{c+1} to 0",
+                        "This candidate path failed, so clear the cell and continue from the previous saved decision."
+                    )
+                else:
+                    self.set_status(
+                        f"Reset r{r+1}, c{c+1}",
+                        "Undo the previous placement."
+                    )
+            elif et == 'backtrack':
+                r,c = event['cell']
+                self.set_status(f"Backtrack: clear r{r+1}, c{c+1}",
+                                "Undo the last placement, resume the previous decision in stack.")
+            elif et == 'dead_end':
+                r,c = event['cell']; cands = event['cands']
+                self.set_status(f"All candidates exhausted at r{r+1}, c{c+1}",
+                                f"Candidate list {cands} exhausted, return to previous stored decision.")
+
 
         if replay_info is not None:
             self.left_info.set_text(replay_info)
@@ -490,69 +663,201 @@ class SudokuTeachViz:
 
     def apply_event(self, event):
         et = event['type']
-        if et in ('base_case','solved'):
-            self.set_cell_highlight(None); self.clear_conflicts()
+
+        if et in ('base_case', 'solved'):
+            self.set_cell_highlight(None)
+            self.clear_conflicts()
+
         elif et == 'select':
-            r,c = event['cell']
-            self.stack_frames.append({'depth':event['depth'],'r':r,'c':c,'d':None,'ret':None})
-            self.render_stack()
-            self.set_cell_highlight((r,c)); self.clear_conflicts()
+            r, c = event['cell']
+            self.set_cell_highlight((r, c))
+            self.clear_conflicts()
+
+            # Recur mode: selection creates a new call-frame
+            if self.mode == 'Recur':
+                self.stack_frames.append({
+                    'depth': event['depth'],
+                    'r': r,
+                    'c': c,
+                    'd': None,
+                    'ret': None
+                })
+                self.render_stack()
+
+            # While mode: do NOT push here
+            # decision_stack should only be updated by push_decision
+
         elif et == 'try':
             self.clear_conflicts()
             if not event['valid'] and event.get('reason'):
                 self.show_conflicts(event['reason'].get('conflicts', []))
+
         elif et == 'place':
-            r,c = event['cell']; d = event['digit']
+            r, c = event['cell']
+            d = event['digit']
             self.board[r][c] = d
-            if self.stack_frames and self.stack_frames[-1]['r']==r and self.stack_frames[-1]['c']==c:
-                self.stack_frames[-1]['d'] = d; self.render_stack()
-            self.draw_numbers(); self.clear_conflicts()
+            self.draw_numbers()
+            self.clear_conflicts()
+
+            # Recur mode: update top recursive frame with chosen digit
+            if self.mode == 'Recur':
+                if self.stack_frames and self.stack_frames[-1]['r'] == r and self.stack_frames[-1]['c'] == c:
+                    self.stack_frames[-1]['d'] = d
+                    self.stack_frames[-1]['ret'] = None   # clear stale False/True
+                    self.render_stack()
+
+            # While mode: board changes here, but stack push happens only at push_decision
+
+        elif et == 'push_decision':
+            if self.mode == 'While':
+                r, c = event['cell']
+                d = event['digit']
+                cands = event['cands']
+                next_idx = event['next_idx']
+
+                self.stack_frames.append({
+                    'r': r,
+                    'c': c,
+                    'cands': list(cands),
+                    'next_idx': next_idx,
+                    'digit': d,
+                    'ret': None
+                })
+                self.render_stack()
+
         elif et == 'recurse_return':
             ok = event['ok']
-            if self.stack_frames:
-                self.stack_frames[-1]['ret'] = ok; self.render_stack()
-        elif et == 'dead_end':
-            if self.stack_frames and self.stack_frames[-1]['d'] is None:
-                self.stack_frames[-1]['ret'] = False; self.render_stack()
-                self.stack_frames.pop(); self.render_stack()
-            self.clear_conflicts()
-        elif et == 'backtrack':
-            r,c = event['cell']
-            self.board[r][c] = 0; self.draw_numbers()
-            if self.stack_frames and self.stack_frames[-1]['r']==r and self.stack_frames[-1]['c']==c:
-                self.stack_frames[-1]['ret'] = False; self.render_stack()
-                self.stack_frames.pop(); self.render_stack()
-            self.clear_conflicts()
-        return self.describe_event(event)
 
+            if self.mode == 'Recur':
+                if self.stack_frames:
+                    self.stack_frames[-1]['ret'] = ok
+                    self.render_stack()
+
+            # While mode: do not mutate stack here
+            # this is just a teaching/status event
+
+        elif et == 'reset_cell':
+            r, c = event['cell']
+            self.board[r][c] = 0
+            self.draw_numbers()
+            self.clear_conflicts()
+
+            # Do not pop here.
+            # Let backtrack handle the logical removal from stack.
+
+        elif et == 'backtrack':
+            r, c = event['cell']
+            self.board[r][c] = 0
+            self.draw_numbers()
+            self.clear_conflicts()
+
+            if self.mode == 'Recur':
+                if self.stack_frames and self.stack_frames[-1]['r'] == r and self.stack_frames[-1]['c'] == c:
+                    self.stack_frames[-1]['d'] = None
+                    self.stack_frames[-1]['ret'] = False
+                    self.render_stack()
+
+            elif self.mode == 'While':
+                # Pop exactly once from decision_stack
+                if self.stack_frames:
+                    self.stack_frames.pop()
+                    self.render_stack()
+
+        elif et == 'dead_end':
+            self.clear_conflicts()
+
+            if self.mode == 'Recur':
+                if self.stack_frames:
+                    self.stack_frames[-1]['ret'] = False
+                    self.render_stack()
+                    self.stack_frames.pop()
+                    self.render_stack()
+
+            # While mode: do not pop here
+            # dead_end is explanatory; actual stack change happens at backtrack
+
+        return self.describe_event(event)
     # ---- Buttons ----
     def on_next(self, _):
-        nxt = self.index + 1
-        if nxt >= len(self.events):
-            self.set_status("Finished. Press Reset to run again.", self.left_info.get_text())
-            self.autoplay = False; self.timer.stop(); return
-        ev = self.events[nxt]
-        self.apply_event(ev)
-        hi_cell = None
-        if self.cell_hl.get_visible():
-            x,y = self.cell_hl.get_xy(); hi_cell = (int(y), int(x))
-        self.history = self.history[:self.index+1]
-        self.history.append((copy.deepcopy(self.board), copy.deepcopy(ev), hi_cell,
-                             copy.deepcopy(self.stack_frames)))
-        self.index = nxt
+        if self.finished:
+            return
+
+        while True:
+            nxt = self.index + 1
+            if nxt >= len(self.events):
+                self.set_status("Finished. Press Reset to run again.", self.left_info.get_text())
+                self.autoplay = False
+                self.timer.stop()
+                return
+
+            ev = self.events[nxt]
+
+            # Skip While-only teaching events when in Recur mode
+            if self.mode == 'Recur' and ev.get('type') in {
+                'init_candidates',
+                'advance_candidate_index',
+                'push_decision',
+                'reset_cell',
+            }:
+                self.index = nxt
+                continue
+
+            self.apply_event(ev)
+
+            if ev.get('type') == 'solved':
+                self.finished = True
+                self.autoplay = False
+                try:
+                    self.timer.stop()
+                except Exception:
+                    pass
+
+            hi_cell = None
+            if self.cell_hl.get_visible():
+                x, y = self.cell_hl.get_xy()
+                hi_cell = (int(y), int(x))
+
+            self.history = self.history[:self.index+1]
+            self.history.append((
+                copy.deepcopy(self.board),
+                copy.deepcopy(ev),
+                hi_cell,
+                copy.deepcopy(self.stack_frames)
+            ))
+            self.index = nxt
+            break
 
     def on_prev(self, _):
         if self.index < 0:
-            self.reset_visual_state_only(); return
-        self.index -= 1
-        if self.index >= 0:
-            board, ev, hi_cell, stack_frames = self.history[self.index]
-            self.board = copy.deepcopy(board); self.draw_numbers()
-            self.set_cell_highlight(hi_cell); self.clear_conflicts()
-            self.stack_frames = copy.deepcopy(stack_frames); self.render_stack()
-            self.describe_event(ev)
-        else:
             self.reset_visual_state_only()
+            return
+
+        while True:
+            self.index -= 1
+
+            if self.index < 0:
+                self.reset_visual_state_only()
+                return
+
+            board, ev, hi_cell, stack_frames = self.history[self.index]
+
+            # Skip While-only teaching events when in Recur mode
+            if self.mode == 'Recur' and ev.get('type') in {
+                'init_candidates',
+                'advance_candidate_index',
+                'push_decision',
+                'reset_cell',
+            }:
+                continue
+
+            self.board = copy.deepcopy(board)
+            self.draw_numbers()
+            self.set_cell_highlight(hi_cell)
+            self.clear_conflicts()
+            self.stack_frames = copy.deepcopy(stack_frames)
+            self.render_stack()
+            self.describe_event(ev)
+            return
 
     def on_auto(self, _):
         self.autoplay = not self.autoplay

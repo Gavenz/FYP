@@ -328,9 +328,9 @@ class MazeViz:
         except Exception:
             pass
 
-        # Left panel (pseudocode + help + status)
-        self.left_ax = self.fig.add_axes([0.05, 0.10, 0.32, 0.80]); self.left_ax.axis('off')
-        self.ax_code = self.left_ax 
+        # Left side split into pseudocode panel + lower info/instructions panel
+        self.pseudocode_panel = self.fig.add_axes([0.05, 0.34, 0.32, 0.56]); self.pseudocode_panel.axis('off')
+        self.instructions_panel = self.fig.add_axes([0.05, 0.10, 0.32, 0.20]); self.instructions_panel.axis('off')
 
         # Maze on the right
         self.ax = self.fig.add_axes([0.45, 0.22, 0.46, 0.60])
@@ -341,16 +341,7 @@ class MazeViz:
 
         # Compact legend panel directly under the maze — same width as maze
         self.legend_ax = self.fig.add_axes([0.45, 0.17, 0.46, 0.045]); self.legend_ax.axis('off')
-
-        # Status line (under pseudocode)
-        self.info_text = self.left_ax.text(0.02, 0.34, "", transform=self.left_ax.transAxes,
-                                           va='bottom', ha='left', family='monospace', color='#333333')
-        # NEW: Cost/ops readout
-        self.cost_text = self.left_ax.text(0.02, 0.31, "", transform=self.left_ax.transAxes,
-                                           va='bottom', ha='left', family='monospace', color='#444444')
-        # (kept for spacing; shows ops/cost summary)
-        self.complexity_text = self.left_ax.text(0.02, 0.28, "", transform=self.left_ax.transAxes,
-                                                 va='bottom', ha='left', family='monospace', color='#444444')
+        
 
         self.algo_name=None; self.generator=None; self.last_state=None
         self.playing=False
@@ -363,8 +354,8 @@ class MazeViz:
         self.exhausted = False
 
         # Help text
-        self.help_text = self.left_ax.text(
-            0.02, 0.25, self._help_message(), transform=self.left_ax.transAxes,
+        self.instruction_text = self.instructions_panel.text(
+            0.02, 0.48, self._instruction_message(), transform=self.instructions_panel.transAxes,
             va='top', ha='left', family='monospace'
         )
 
@@ -377,8 +368,6 @@ class MazeViz:
 
         # Pseudocode support
         self.code_text_artists = []
-        our_highlight = None
-        self.code_highlight = our_highlight
         self._init_code_blocks()
         self.pc_sets = self.PSEUDOCODE  # keep old name working
 
@@ -393,17 +382,14 @@ class MazeViz:
         self.apply_responsive_layout(initial=True)
 
     # ----------------- panels & legend
-    def _help_message(self):
+    def _instruction_message(self):
         return (
-            "Instructions\n"
+            "Instructions to play via keyboard\n"
             "───────────\n"
-            "1: DFS (stack)\n"
-            "2: BFS (queue)\n"
-            "3: Dijkstra (priority queue, weighted)\n"
             "SPACE: Step  |  P: Autoplay/Pause  |  U: Undo\n"
-            "R: Reset     |  L: Cycle Maze (unweighted / weighted)\n"
-            "\n"
-            f"Move cost = cost(cell you ENTER): Open=1, Mud={MUD_COST}\n"
+            "R: Reset     |  L: Change Maze (unweighted / weighted)\n"
+            "1: DFS       |  2: BFS     | 3: Dijkstra \n"
+            f"Move cost (for weighted): Open=1, Mud={MUD_COST}\n"
         )
 
     def draw_custom_legend(self):
@@ -641,12 +627,10 @@ class MazeViz:
         if state is None:
             self.set_message([("READY",
                                "SPACE = step. 1/2/3 = DFS/BFS/Dijkstra. U = retract. L = cycle maze.")], kind='info')
-            self.info_text.set_text(f"Algorithm: {self.algo_name}   Maze: {self.maze_name}")
-            self.cost_text.set_text("" if not self.maze_name.startswith("Weighted") else
-                                    f"Cost — Open=1, Mud={MUD_COST}.")
-            self._draw_code_panel(self.algo_name, current_line=0)
+            self._draw_pseudocode_panel(self.algo_name, current_line=0)
             self.fig.canvas.draw_idle()
             return
+        self.last_state = state
 
         visited  = state['visited']
         frontier = state['frontier']
@@ -687,9 +671,7 @@ class MazeViz:
         else:
             gn = dist_map.get(current, '-')
             extra = f"g(n) {gn}"
-        self.info_text.set_text(''
-           # f"{self.algo_name} — current {current} | frontier {len(fr_nodes)} | visited {len(visited)} | {extra} | Maze: {self.maze_name}"
-        )
+
         if self.algo_name in ('BFS', 'DFS'):
             theo = f"Theory: O(V+E)  |  Here: V={V}, E={E}"
         else:
@@ -706,6 +688,11 @@ class MazeViz:
                 f", edge_relaxed={ops.get('relax', 0)}, "
                 f"stale_extracts={ops.get('stale_pop', 0)}"
             )
+
+        line = self.highlight_pseudocode(self.algo_name, state, finished)
+        self._draw_pseudocode_panel(self.algo_name, current_line=line)
+        self.fig.canvas.draw_idle()
+
         # --- path_so_far (robust for BOTH weighted & unweighted) ----------------------
         def _safe_reconstruct_to_start(cur, parent_map, start_node):
             """
@@ -724,7 +711,6 @@ class MazeViz:
                     return []  # loop or broken chain
                 seen.add(u)
                 u = parent_map[u]
-
         def _current_path_cost(algo_name, cur, parent_map, dist_map, start_node):
             # 1) Dijkstra: prefer the distance map if available (true g(cur))
             if algo_name == 'Dijkstra' and dist_map and cur in dist_map:
@@ -810,8 +796,8 @@ class MazeViz:
         kind = ('ok' if action=='goal' else ('warn' if action=='deadend' else 'info'))
         self.set_message(sections, kind=kind)
 
-        line = self._which_line(state['algo'], state, finished)
-        self._draw_code_panel(state['algo'], current_line=line)
+        line = self.highlight_pseudocode(state['algo'], state, finished)
+        self._draw_pseudocode_panel(state['algo'], current_line=line)
         self.fig.canvas.draw_idle()
 
     # ----------------- keys
@@ -855,14 +841,17 @@ class MazeViz:
         small_screen = (fig_h_px < 800 or fig_w_px < 1200)
 
         if aspect >= 1.5:  # wide
-            left_rect  = [0.05, 0.10, 0.32, 0.80]
+            code_rect  = [0.05, 0.34, 0.32, 0.56]
+            left_rect  = [0.05, 0.10, 0.32, 0.20]
             maze_rect  = [0.45, 0.22, 0.46, 0.60]
         elif 1.15 <= aspect < 1.5:  # medium
-            left_rect  = [0.04, 0.10, 0.36, 0.80]
+            code_rect  = [0.04, 0.34, 0.36, 0.56]
+            left_rect  = [0.04, 0.10, 0.36, 0.20]
             maze_rect  = [0.43, 0.22, 0.50, 0.58]
         else:  # narrow/tall
-            left_rect  = [0.05, 0.05, 0.90, 0.30]
-            maze_rect  = [0.08, 0.44, 0.84, 0.50]
+            code_rect  = [0.05, 0.62, 0.90, 0.22]
+            left_rect  = [0.05, 0.05, 0.90, 0.20]
+            maze_rect  = [0.08, 0.30, 0.84, 0.26]
 
         msg_rect    = [maze_rect[0], maze_rect[1] + maze_rect[3] + 0.012,
                        maze_rect[2], 0.18 if small_screen else 0.16]
@@ -870,119 +859,248 @@ class MazeViz:
         legend_rect = [maze_rect[0], max(0.04, maze_rect[1] - (legend_h + 0.012)),
                        maze_rect[2], legend_h]
 
-        self.left_ax.set_position(left_rect)
+        self.pseudocode_panel.set_position(code_rect)
+        self.instructions_panel.set_position(left_rect)
         self.ax.set_position(maze_rect)
         self.msg_ax.set_position(msg_rect)
         self.legend_ax.set_position(legend_rect)
 
-        # keep status lines where we expect them
-        self.info_text.set_position((0.02, 0.34))
-        self.cost_text.set_position((0.02, 0.31))
-        self.complexity_text.set_position((0.02, 0.28))
+        # keep instructions text aligned inside instruction panel
+        self.instruction_text.set_position((0.02, 0.48))
 
         msg_px = fig_w_px * msg_rect[2]
         self.wrap_cols = max(42, min(120, int(msg_px / 8.4)))
         self.msg_fs = (9.6 if small_screen else 10.2) + 0.0020 * msg_px
-        self.help_text.set_fontsize(self.msg_fs - (1.0 if small_screen else 0.8))
+
+        self.instruction_text.set_fontsize(self.msg_fs - (1.0 if small_screen else 0.8))
+
         self.line_spacing = 0.18 if small_screen else 0.20
 
         self.draw_custom_legend()
-        if self.last_state is None and not initial:
-            self.update_overlay(None)
-        elif self.last_state is not None:
-            cur_state = self.history[self.hist_idx] if 0 <= self.hist_idx < len(self.history) else self.last_state
-            finished = (self.exhausted and self.hist_idx == len(self.history)-1) or cur_state.get('action')=='goal'
-            self.prev_sets = self._sets_from_state(self.history[self.hist_idx-1] if self.hist_idx-1 >= 0 else None)
-            self.update_overlay(cur_state, finished=finished)
-
-        self.fig.canvas.draw_idle()
 
     # ---------- pseudocode blocks & highlighting ----------
     def _init_code_blocks(self):
-        self.PSEUDOCODE = {
-            'DFS': [
-                "push(start)                      # stack = LIFO",
-                "visited = ∅; parent[start]=None",
-                "$while$ stack not empty:",
-                "    u = pop()                    # remove last",
-                "    if u == goal: break",
-                "    if u ∉ visited:",
-                "        visited.add(u)",
-                "        $for$ v in neighbors(u):",
-                "            if v ∉ visited and v ∉ stack:",
-                "                parent[v] = u; push(v)",
-            ],
-            'BFS': [
-                "enqueue(start)                   # queue = FIFO, layer 0",
-                "visited = {start}; parent[start]=None",
-                "$while$ queue not empty:",
-                "    u = dequeue()                # remove front",
-                "    if u == goal: break",
-                "    $for$ v in neighbors(u):",
-                "        if v ∉ visited:",
-                "            visited.add(v)       # discover next layer",
-                "            parent[v] = u; enqueue(v)",
-            ],
-            'Dijkstra': [
-                "push(0,start)  # Priority queue on cost",
-                "dist[start]=0; parent[start]=None",
-                "$while$ Priority_Queue not empty:",
-                "    (du,u) = pop_min()",
-                "    if u == goal: break",
-                "    for v in neighbors(u):",
-                "        nd = du + cost(v)",
-                "        if nd < dist[v]:",
-                "            dist[v]=nd; parent[v]=u; push(nd,v)",
-            ],
-        }
+            self.PSEUDOCODE = {
+                'DFS': [
+                    "stack =[start]                     ",
+                    "visited = {null set}; parent[start]=None",
+                    "-------------------------------------------",
+                    "while stack not empty:",
+                    "    current = stack.pop()         # remove top            ",
+                    "    if current == goal: break",
+                    "    if current in visited: continue",
+                    "    visited.add(current)",
+                    "    for neighbor in neighbors(current):",
+                    "        if neighbour not in visited:",
+                    "            parent[neighborr] = current",
+                    "            push(neighbor) to stack",
+                    "",
+                ],
+                'BFS': [
+                    "queue = [start]                  ",
+                    "visited = {start}; parent[start]=None",
+                    "",
+                    "while queue not empty:",
+                    "    current = queue.pop(0)             # remove left=most",
+                    "    if current == goal: break",
+                    "    for neighbor in neighbors(current):       ",   
+                    "        if v not in visited:",
+                    "            visited.add(neighbor)       ",
+                    "            parent[neighbor] = current",
+                    "            queue.enqueue(neighbor)",
+                    "",
+                ],
+                'Dijkstra': [
+                    "pq = [(0, start)]            # entry: (cost_from_start, node)",
+                    "dist[start]=0; parent[start]=None",
+                    "-- #dist(neighbor) = infinity --",
+                    "while pq not empty:",
+                    "    current_cost, current = pop_min(pq)",
+                    "    if current == goal: break",
+                    "    for neighbor in neighbors(current):",
+                    "        new_cost = current_cost + cost(neighbor)",
+                    "        if new_cost < dist[neighbor]:",
+                    "            dist[neighbor] = new_cost",
+                    "            parent[neighbor] = current; enqueue(new cost,neighbor)",
+                    "",
+                ],
+            }
+            self.map_pc = {
+                'DFS': {
+                    'init': 0,
+                    'pop': 4,
+                    'visit': 7,
+                    'consider': 8,
+                    'push': 11,
+                    'deadend': 8,
+                    'goal': 5,
+                },
+                'BFS': {
+                    'init': 0,
+                    'pop': 4,
+                    'consider': 6,
+                    'push': 10,
+                    'deadend': 6,
+                    'goal': 5,
+                },
+                'Dijkstra': {
+                    'init': 1,
+                    'pop_min': 4,
+                    'stale_pop': 4,
+                    'consider': 6,
+                    'relax': 9,
+                    'deadend': 6,
+                    'goal': 5,
+                },
+            }
 
-    def _draw_code_panel(self, algo, current_line=None):
-        ax = self.ax_code
-        for t in getattr(self, "code_text_artists", []):
-            try: t.remove()
-            except Exception: pass
-        self.code_text_artists = []
+            self.code_text_artists = []
+            self.code_highlight = None
 
-        lines = self.pc_sets.get(algo, [])
-        fs = max(8, self.msg_fs - 1)
-        y0, dy, x0 = 0.95, 0.065, 0.02
-        CHAR_DX = 0.012
+    def highlight_pseudocode(self, algo, state, finished):
+        action = state.get('action') if state else None
+        if finished or action == 'goal':
+            action = 'goal'
+        return self.map_pc.get(algo, {}).get(action, 0) + getattr(self, "pc_offset", 0)
+    
+    def _get_frontier_preview_lines(self):
+        """
+        Fix block DFS:4 lines, BFS: 1 line, Dijkstra: 1 line, so highlight_pseudocode stable.
+        """
+        state = getattr(self, "last_state", None)
+        algo = self.algo_name
 
-        for i, s in enumerate(lines):
-            y = y0 - dy * i
-            if y < 0.30: break
+        if state is None:
+            if algo == 'DFS':
+                return [
+                    "stack (top)",
+                    "    —",
+                    "    —",
+                    "    —",
+                ]
+            elif algo == 'BFS':
+                return [
+                    "queue = [ ]   # front = left-most"
+                ]
+            elif algo == 'Dijkstra':
+                return [
+                    "pq = [ ]   # min_cost first"
+                ]
+            return []
 
-            # split comment
-            if '#' in s:
-                code_part, comment = s.split('#', 1)
-                comment = '#' + comment
-            else:
-                code_part, comment = s, None
+        frontier = state.get('frontier', [])
 
-            # draw code part
-            t_code = ax.text(x0, y, code_part, transform=ax.transAxes,
-                            va='top', ha='left', color='black',
-                            fontfamily='DejaVu Sans Mono', fontsize=fs)
-            self.code_text_artists.append(t_code)
-
-            # draw comment part
-            if comment:
-                x_comment = x0 + CHAR_DX * len(code_part)
-                t_cmt = ax.text(x_comment, y, comment, transform=ax.transAxes,
-                                va='top', ha='left', color='#808a9e',
-                                fontfamily='DejaVu Sans Mono', fontsize=fs)
-                self.code_text_artists.append(t_cmt)
-
-    def _which_line(self, algo, state, finished):
-        a = state.get('action') if state else None
-        if finished or a == 'goal': return 4
         if algo == 'DFS':
-            return {'init':0,'pop':3,'visit':6,'consider':7,'push':9,'deadend':7}.get(a,3)
-        if algo == 'BFS':
-            return {'init':0,'pop':3,'consider':5,'push':8,'deadend':5}.get(a,3)
-        if algo == 'Dijkstra':
-            return {'init':0, 'pop_min':3, 'consider':6, 'relax':8, 'stale_pop':3, 'deadend':5}.get(a, 3)
-        return 6 if a == 'expand' else (5 if a=='deadend' else 3)
+            # Show top of stack first, vertically
+            items = list(frontier)[-3:]              # keep only last 3 pushed
+            shown = [str(x) for x in reversed(items)]  # top appears first
+            while len(shown) < 3:
+                shown.append("—")
+
+            return [
+                "stack (top)",
+                f"    {shown[0]}",
+                f"    {shown[1]}",
+                f"    {shown[2]}",
+            ]
+
+        elif algo == 'BFS':
+            # Show first 3 queue items, front on the left
+            items = list(frontier)[:3]
+            if items:
+                return [f"queue = {items}   # front = left"]
+            return ["queue = [ ]   # front = left"]
+
+        elif algo == 'Dijkstra':
+            # Frontier is already a heap-like list of (cost, node) tuples
+            items = list(frontier)[:3]
+            if items:
+                return [f"pq = {items}   # min first"]
+            return ["pq = [ ]   # min first"]
+
+        return []
+
+    def _draw_pseudocode_panel(self, algo, current_line=None):
+        ax = self.pseudocode_panel
+         # remove old texts
+        for t in getattr(self, "code_text_artists", []):
+            try:
+                t.remove()
+            except Exception:
+                pass
+        self.code_text_artists = []
+        # remove old highlight rectangle
+        if getattr(self, "code_highlight", None) is not None:
+            try:
+                self.code_highlight.remove()
+            except Exception:
+                pass
+            self.code_highlight = None
+        # fixed preview block
+        preview_data_structure_lines = self._get_frontier_preview_lines()
+        # stable offset: preview block + `1 spacer line
+        self.pc_offset = len(preview_data_structure_lines) + 1
+        base_lines = (
+            preview_data_structure_lines
+            + [""]  # spacer line
+            + list(self.pc_sets.get(algo, []))
+        )
+        base_lines.append(f"Algorithm: {self.algo_name}   Maze: {self.maze_name}")
+
+        fs = max(8, self.msg_fs - 1)
+        n = len(base_lines)
+        y0 = 0.97
+        bottom_margin = 0.06
+        dy = min(0.066, (y0 - bottom_margin) / max(1, n))
+
+        highlighted_text = None
+
+        for i, s in enumerate(base_lines):
+            y = y0 - dy * i
+            if i < len(preview_data_structure_lines):
+                color = "#439AF0"
+            else:
+                color = '#708238' if '#' in s else 'black'
+
+            t = ax.text(
+                0.02, y, s,
+                transform=ax.transAxes,
+                va='center', ha='left',
+                color=color,
+                family='monospace',
+                fontsize=fs,
+                zorder=3)
+
+            self.code_text_artists.append(t)
+
+            if current_line is not None and i ==current_line:
+                highlighted_text = t
+                    # draw highlight rectangle behind selected line
+        
+        if highlighted_text is not None:
+            self.fig.canvas.draw()
+            renderer = self.fig.canvas.get_renderer()
+            bbox = highlighted_text.get_window_extent(renderer=renderer)
+
+            inv = ax.transAxes.inverted()
+            (x0, y0_ax) = inv.transform((bbox.x0, bbox.y0))
+            (x1, y1_ax) = inv.transform((bbox.x1, bbox.y1))
+
+            pad_x = 0.008
+            pad_y = 0.006
+
+            from matplotlib.patches import Rectangle
+            self.code_highlight = Rectangle(
+                (x0 - pad_x, y0_ax - pad_y),
+                (x1 - x0) + 2 * pad_x,
+                (y1_ax - y0_ax) + 2 * pad_y,
+                transform=ax.transAxes,
+                facecolor='#FFF59D',
+                edgecolor='none',
+                alpha=0.85,
+                zorder=1
+            )
+            ax.add_patch(self.code_highlight)
 
 
 if __name__ == '__main__':
