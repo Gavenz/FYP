@@ -10,6 +10,7 @@
 # NEW: Totals at goal (steps + path cost).
 # NEW: Cost counters (Weighted only) in left panel and (space-permitting) message panel.
 
+import time
 import random
 import heapq
 from collections import deque
@@ -18,16 +19,32 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, Circle
 
 # --------- Terrain & costs ----------
-# 1 = Wall (impassable)
 # 0 = Open (cost 1)
+# 1 = Wall (impassable)
 # 2 = Mud  (cost MUD_COST)
+
 MUD_COST = 4
-COSTS = {0: 1, 2: MUD_COST}  # fallback to 1 if missing
+COSTS = {0: 1, 2: MUD_COST} 
 
+def cell_cost(cell_value: int) -> int:
+    return COSTS.get(cell_value, 1)
 
-def cell_cost(val: int) -> int:
-    return COSTS.get(val, 1)
+def new_counters():
+    return {
+        'push':0, 'pop':0, 'consider':0, 'relax':0, 'stale_pop':0, 'visited_add':0
+    }
 
+def graph_sizes():
+    """Rough |V| and |E| of current passable grid under 4-neighborhood."""
+    V = sum(1 for y in range(H) for x in range(W) if passable(x,y))
+    E = 0
+    for y in range(H):
+        for x in range(W):
+            if passable(x,y):
+                if x+1 < W and passable(x+1,y): E += 1
+                if y+1 < H and passable(x,y+1): E += 1
+    E *= 2  # undirected edges, count both ways like adjacency
+    return V, E
 
 # --------------------------------------------------------------------------------------
 # Utility: generate a 12x12 perfect (tree) maze + a weighted/loopy variant
@@ -70,7 +87,7 @@ def generate_tree_maze_grid(W=12, H=12, seed=42):
         xm, ym = (xw + xw2)//2, (yw + yw2)//2
         G[ym][xm] = 0
         G[yw2][xw2] = 0
-        visited[nx][ny] = True
+        visited[nx][ny] = True 
         stack.append((nx, ny))
 
     return G
@@ -162,7 +179,6 @@ def in_bounds(x, y): return 0 <= x < W and 0 <= y < H
 def passable(x, y):  return MAZE[y][x] != 1
 NEIGHBOR_DIRS = [(1,0),(0,1),(-1,0),(0,-1)]  # R, D, L, U
 
-
 def neighbors(x, y):
     for dx, dy in NEIGHBOR_DIRS:
         nx, ny = x+dx, y+dy
@@ -178,56 +194,74 @@ def gen_dfs(start, goal):
     stack = [start]
     visited = set()
     parent = {start: None}
-    yield {'algo':'DFS','action':'init','current':start,'frontier':list(stack),
-           'visited':set(visited),'parent':dict(parent),'dist':{},'neighbors':[]}
+
+    ops = new_counters()
+    V, E = graph_sizes()
+
+    def snap(action, current, neighbors_list=[]):
+        return {
+            'algo':'DFS','action':action,'current':current,
+            'frontier':list(stack),'visited':set(visited),'parent':dict(parent),
+            'dist':{},'neighbors':neighbors_list,'ops':dict(ops),'sizes':(V,E)
+        }
+
+    # init
+    yield snap('init', start)
+
     while stack:
-        u = stack.pop()
-        yield {'algo':'DFS','action':'pop','current':u,'frontier':list(stack),
-               'visited':set(visited),'parent':dict(parent),'dist':{},'neighbors':[]}
+        u = stack.pop(); ops['pop'] += 1
+        yield snap('pop', u)
+
         if u == goal:
-            yield {'algo':'DFS','action':'goal','current':u,'frontier':list(stack),
-                   'visited':set(visited),'parent':dict(parent),'dist':{},'neighbors':[]}
+            yield snap('goal', u)
             return
-        if u in visited: continue
-        visited.add(u)
+
+        if u in visited:
+            continue
+
+        visited.add(u); ops['visited_add'] += 1
         nbrs_all = [v for v in neighbors(*u)]
-        yield {'algo':'DFS','action':'visit','current':u,'frontier':list(stack),
-               'visited':set(visited),'parent':dict(parent),'dist':{},'neighbors':nbrs_all}
+        yield snap('visit', u, nbrs_all)
+
         pushed_any = False
         for v in nbrs_all:
-            yield {'algo':'DFS','action':'consider','current':u,'frontier':list(stack),
-                   'visited':set(visited),'parent':dict(parent),'dist':{},'neighbors':[v]}
+            ops['consider'] += 1
+            yield snap('consider', u, [v])
             if v not in visited and v not in stack:
                 parent.setdefault(v, u)
-                stack.append(v); pushed_any = True
-                yield {'algo':'DFS','action':'push','current':u,'frontier':list(stack),
-                       'visited':set(visited),'parent':dict(parent),'dist':{},'neighbors':[v]}
+                stack.append(v); ops['push'] += 1; pushed_any = True
+                yield snap('push', u, [v])
+
         if not pushed_any:
-            yield {'algo':'DFS','action':'deadend','current':u,'frontier':list(stack),
-                   'visited':set(visited),'parent':dict(parent),'dist':{},'neighbors':[]}
+            yield snap('deadend', u)
 
 
 def gen_bfs(start, goal):
     q = deque([start])
     visited = {start}
     parent = {start: None}
-    yield {'algo':'BFS','action':'init','current':start,'frontier':list(q),
-           'visited':set(visited),'parent':dict(parent),'dist':{},'neighbors':[]}
+    ops = new_counters()
+    V, E = graph_sizes()
+
+    def snap(action, current, neighbors_list=[]):
+        return {'algo':'BFS','action':action,'current':current,'frontier':list(q),
+                'visited':set(visited),'parent':dict(parent),'dist':{},
+                'neighbors':neighbors_list,'ops':dict(ops),'sizes':(V,E)}
+
+    yield snap('init', start)
     while q:
-        u = q.popleft()
-        yield {'algo':'BFS','action':'pop','current':u,'frontier':list(q),
-               'visited':set(visited),'parent':dict(parent),'dist':{},'neighbors':[]}
+        u = q.popleft(); ops['pop'] += 1
+        yield snap('pop', u)
         if u == goal:
-            yield {'algo':'BFS','action':'goal','current':u,'frontier':list(q),
-                   'visited':set(visited),'parent':dict(parent),'dist':{},'neighbors':[]}
+            yield snap('goal', u)
             return
         for v in neighbors(*u):
-            yield {'algo':'BFS','action':'consider','current':u,'frontier':list(q),
-                   'visited':set(visited),'parent':dict(parent),'dist':{},'neighbors':[v]}
+            ops['consider'] += 1
+            yield snap('consider', u, [v])
             if v not in visited:
-                visited.add(v); parent[v] = u; q.append(v)
-                yield {'algo':'BFS','action':'push','current':u,'frontier':list(q),
-                       'visited':set(visited),'parent':dict(parent),'dist':{},'neighbors':[v]}
+                visited.add(v); ops['visited_add'] += 1
+                parent[v] = u; q.append(v); ops['push'] += 1
+                yield snap('push', u, [v])
 
 
 def gen_dijkstra(start, goal):
@@ -236,46 +270,50 @@ def gen_dijkstra(start, goal):
     parent = {start: None}
     visited = set()
 
+    ops = new_counters()
+    V, E = graph_sizes()
+
+    def snap(action, current, neighbors_list=[]):
+        return {
+            'algo':'Dijkstra','action':action,'current':current,
+            'frontier':list(pq),'visited':set(visited),'parent':dict(parent),
+            'dist':dict(dist),'neighbors':neighbors_list,'ops':dict(ops),'sizes':(V,E)
+        }
+
     # initial snapshot
-    yield {'algo':'Dijkstra','action':'init','current':start,'frontier':list(pq),
-           'visited':set(visited),'parent':dict(parent),'dist':dict(dist),'neighbors':[]}
+    yield snap('init', start)
 
     while pq:
         du, u = heapq.heappop(pq)
 
         # stale extract (worse than current best) → show & skip
         if du != dist.get(u, float('inf')):
-            yield {'algo':'Dijkstra','action':'stale_pop','current':u,'frontier':list(pq),
-                   'visited':set(visited),'parent':dict(parent),'dist':dict(dist),'neighbors':[]}
+            ops['stale_pop'] += 1
+            yield snap('stale_pop', u)
             continue
 
         visited.add(u)
-        yield {'algo':'Dijkstra','action':'pop_min','current':u,'frontier':list(pq),
-               'visited':set(visited),'parent':dict(parent),'dist':dict(dist),'neighbors':[]}
+        ops['pop'] += 1
+        yield snap('pop_min', u)
 
         if u == goal:
-            yield {'algo':'Dijkstra','action':'goal','current':u,'frontier':list(pq),
-                   'visited':set(visited),'parent':dict(parent),'dist':dict(dist),'neighbors':[]}
+            yield snap('goal', u)
             return
 
         for v in neighbors(*u):
             vx, vy = v
             nd = du + cell_cost(MAZE[vy][vx])  # cost to ENTER v
 
-            # show consideration
-            yield {'algo':'Dijkstra','action':'consider','current':u,'frontier':list(pq),
-                   'visited':set(visited),'parent':dict(parent),'dist':dict(dist),'neighbors':[v]}
+            ops['consider'] += 1
+            yield snap('consider', u, [v])
 
             if nd < dist.get(v, float('inf')):
                 dist[v] = nd
                 parent[v] = u
                 heapq.heappush(pq, (nd, v))
-
-                # show relaxation (decrease-key)
-                yield {'algo':'Dijkstra','action':'relax','current':u,'frontier':list(pq),
-                       'visited':set(visited),'parent':dict(parent),'dist':dict(dist),'neighbors':[v]}
-
-
+                ops['relax'] += 1
+                ops['push']  += 1
+                yield snap('relax', u, [v])
 
 # --------------------------------------------------------------------------------------
 # Viz
@@ -289,8 +327,9 @@ class MazeViz:
         except Exception:
             pass
 
-        # Left panel (pseudocode + help + status)
-        self.left_ax = self.fig.add_axes([0.05, 0.10, 0.32, 0.80]); self.left_ax.axis('off')
+        # Left side split into pseudocode panel + lower info/instructions panel
+        self.pseudocode_panel = self.fig.add_axes([0.05, 0.34, 0.32, 0.56]); self.pseudocode_panel.axis('off')
+        self.instructions_panel = self.fig.add_axes([0.05, 0.10, 0.32, 0.20]); self.instructions_panel.axis('off')
 
         # Maze on the right
         self.ax = self.fig.add_axes([0.45, 0.22, 0.46, 0.60])
@@ -301,13 +340,7 @@ class MazeViz:
 
         # Compact legend panel directly under the maze — same width as maze
         self.legend_ax = self.fig.add_axes([0.45, 0.17, 0.46, 0.045]); self.legend_ax.axis('off')
-
-        # Status line (under pseudocode)
-        self.info_text = self.left_ax.text(0.02, 0.34, "", transform=self.left_ax.transAxes,
-                                           va='bottom', ha='left', family='monospace', color='#333333')
-        # NEW: Cost readout line (Weighted maze only)
-        self.cost_text = self.left_ax.text(0.02, 0.31, "", transform=self.left_ax.transAxes,
-                                           va='bottom', ha='left', family='monospace', color='#444444')
+        
 
         self.algo_name=None; self.generator=None; self.last_state=None
         self.playing=False
@@ -320,8 +353,8 @@ class MazeViz:
         self.exhausted = False
 
         # Help text
-        self.help_text = self.left_ax.text(
-            0.02, 0.25, self._help_message(), transform=self.left_ax.transAxes,
+        self.instruction_text = self.instructions_panel.text(
+            0.02, 0.48, self._instruction_message(), transform=self.instructions_panel.transAxes,
             va='top', ha='left', family='monospace'
         )
 
@@ -334,8 +367,8 @@ class MazeViz:
 
         # Pseudocode support
         self.code_text_artists = []
-        self.code_highlight = None
         self._init_code_blocks()
+        self.pc_sets = self.PSEUDOCODE  # keep old name working
 
         # Delta memory
         self.prev_sets = {'visited': set(), 'frontier': set(), 'parents': set()}
@@ -348,18 +381,14 @@ class MazeViz:
         self.apply_responsive_layout(initial=True)
 
     # ----------------- panels & legend
-    def _help_message(self):
+    def _instruction_message(self):
         return (
-            "How to Play\n"
+            "Instructions to play via keyboard\n"
             "───────────\n"
-            "1: DFS (stack)\n"
-            "2: BFS (queue)\n"
-            "3: Dijkstra (PQ, weighted)\n"
-            "SPACE: Step  |  P: Play/Pause  |  U: Retract (undo)\n"
-            "R: Reset     |  L: Cycle Maze (Tree-12 / Weighted-12)\n"
-            "\n"
-            f"Move cost = cost(cell you ENTER): Open=1, Mud={MUD_COST}\n"
-            "Dijkstra minimizes total cost; BFS minimizes steps only."
+            "SPACE: Step  |  P: Autoplay/Pause  |  U: Undo\n"
+            "R: Reset     |  L: Change Maze (unweighted / weighted)\n"
+            "1: DFS       |  2: BFS     | 3: Dijkstra \n"
+            f"Move cost (for weighted): Open=1, Mud={MUD_COST}\n"
         )
 
     def draw_custom_legend(self):
@@ -369,8 +398,7 @@ class MazeViz:
             ("End",     '#FFF176',  'gray'),
             ("Current", '#FFC000',  '#8d6e00'),
             ("Visited", '#dcdcdc',  'gray'),
-            ("Goal",    'crimson',  'gray'),
-            ("Mud (×%d)" % MUD_COST, '#BCAAA4',  'gray'),
+            ("Mud",  '#BCAAA4',  'gray'),
             ("Wall",    'black',    'gray'),
             ("Open",    'white',    'gray'),
         ]
@@ -418,6 +446,8 @@ class MazeViz:
         else: self.generator = gen_dijkstra(START, GOAL)
         self.last_state=None; self.playing=False
         self.exhausted=False
+        self._t0 = time.perf_counter()
+        self.elapsed_ms = None
         self.history=[]; self.hist_idx=-1
         self.prev_sets = {'visited': set(), 'frontier': set(), 'parents': set()}
         self.draw_static_maze()
@@ -596,18 +626,18 @@ class MazeViz:
         if state is None:
             self.set_message([("READY",
                                "SPACE = step. 1/2/3 = DFS/BFS/Dijkstra. U = retract. L = cycle maze.")], kind='info')
-            self.info_text.set_text(f"Algorithm: {self.algo_name}   Maze: {self.maze_name}")
-            self.cost_text.set_text("" if not self.maze_name.startswith("Weighted") else
-                                    f"Cost — Open=1, Mud={MUD_COST}.")
-            self._draw_code_panel(self.algo_name, current_line=0)
+            self._draw_pseudocode_panel(self.algo_name, current_line=0)
             self.fig.canvas.draw_idle()
             return
+        self.last_state = state
 
         visited  = state['visited']
         frontier = state['frontier']
         parent   = state['parent']
         current  = state['current']
         dist_map = state.get('dist', {})
+        ops = state.get('ops', {}) if state else {}
+        V,E = state.get('sizes', graph_sizes()) if state else graph_sizes()
 
         # shaded layers
         for (x,y) in visited:
@@ -640,41 +670,78 @@ class MazeViz:
         else:
             gn = dist_map.get(current, '-')
             extra = f"g(n) {gn}"
-        self.info_text.set_text(
-            f"{self.algo_name} — current {current} | frontier {len(fr_nodes)} | visited {len(visited)} | {extra} | Maze: {self.maze_name}"
-        )
 
-        # ---------- NEW: cost counters (Weighted maze only) ----------
-        if self.maze_name.startswith("Weighted"):
-            # cost of path-so-far to *current* via parent pointers (for all algos)
-            path_to_cur = []
-            if current in parent:
-                path_to_cur = self.reconstruct_path(parent, current)
-            cur_steps = max(0, len(path_to_cur)-1)
-            cur_cost  = self.path_cost(path_to_cur)
-
-            if self.algo_name == 'Dijkstra':
-                best_goal = dist_map.get(GOAL, None)
-                min_front = None
-                if frontier:
-                    # frontier is list of (d, node)
-                    try:
-                        min_front = min(d for (d, _n) in frontier)
-                    except Exception:
-                        min_front = None
-                self.cost_text.set_text(
-                    f"Cost — g(cur)={cur_cost if path_to_cur else '-'} | best_goal={best_goal if best_goal is not None else '—'} | min_frontier={min_front if min_front is not None else '—'}"
-                )
-                # Include COST section in the message panel too (space-permitting)
-                cost_panel_line = f"g(cur)={cur_cost if path_to_cur else '-'}; best_goal={best_goal if best_goal is not None else '—'}; min_frontier={min_front if min_front is not None else '—'}"
-            else:
-                # BFS/DFS on weighted maze: show their cost so far (not guaranteed optimal)
-                self.cost_text.set_text(f"Cost — path_so_far={cur_cost} | steps={cur_steps}")
-                cost_panel_line = f"path_so_far={cur_cost}; steps={cur_steps}"
+        if self.algo_name in ('BFS', 'DFS'):
+            theo = f"Theory: O(V+E)  |  Here: V={V}, E={E}"
         else:
-            self.cost_text.set_text("")
-            cost_panel_line = None
-        # -------------------------------------------------------------
+            theo = f"Theory: O((V+E)·log V)  |  Here: V={V}, E={E}"
+
+        # friendlier operation labels (keep internal counters as-is)
+        ops_line = (
+            f"work: added_to_frontier={ops.get('push', 0)}, "
+            f"removed_from_frontier={ops.get('pop', 0)}, "
+            f"neighbors_examined={ops.get('consider', 0)}"
+        )
+        if self.algo_name == 'Dijkstra':
+            ops_line += (
+                f", edge_relaxed={ops.get('relax', 0)}, "
+                f"stale_extracts={ops.get('stale_pop', 0)}"
+            )
+
+        line = self.highlight_pseudocode(self.algo_name, state, finished)
+        self._draw_pseudocode_panel(self.algo_name, current_line=line)
+        self.fig.canvas.draw_idle()
+
+        # --- path_so_far (robust for BOTH weighted & unweighted) ----------------------
+        def _safe_reconstruct_to_start(cur, parent_map, start_node):
+            """
+            Return [start ... cur] if there's a clean chain; else [].
+            Robust to transient/partial parents during Dijkstra relaxations.
+            """
+            if cur is None or not parent_map:
+                return []
+            path, u, seen = [], cur, set()
+            while True:
+                path.append(u)
+                if u == start_node:
+                    path.reverse()
+                    return path
+                if u in seen or u not in parent_map:
+                    return []  # loop or broken chain
+                seen.add(u)
+                u = parent_map[u]
+        def _current_path_cost(algo_name, cur, parent_map, dist_map, start_node):
+            # 1) Dijkstra: prefer the distance map if available (true g(cur))
+            if algo_name == 'Dijkstra' and dist_map and cur in dist_map:
+                return dist_map[cur]
+            # 2) Otherwise try a safe reconstruction and compute cost
+            path = _safe_reconstruct_to_start(cur, parent_map, start_node)
+            if len(path) >= 2:
+                return self.path_cost(path)  # works for weighted & unweighted
+            # 3) Not ready yet
+            return '-'
+
+        # pull what we need from 'state' (these names already exist in update_overlay)
+        parent_map = parent          # from the args you already have
+        cur_node   = current
+        dist_map   = state.get('dist', {})   # Dijkstra provides this; others won't
+
+        cur_cost = _current_path_cost(self.algo_name, cur_node, parent_map, dist_map, START)
+        # ------------------------------------------------------------------------------
+
+        # --- empirical proxies for "time complexity" ---
+        nodes_visited = len(visited)  
+        steps_taken = (
+            ops.get('push', 0)
+            + ops.get('pop', 0)
+            + ops.get('consider', 0)
+            + (ops.get('relax', 0) if self.algo_name == 'Dijkstra' else 0)
+            + (ops.get('stale_pop', 0) if self.algo_name == 'Dijkstra' else 0)
+        )
+        t_ms = getattr(self, 'elapsed_ms', None)
+        empirical = f"Nodes Visited={nodes_visited} | Steps Taken={steps_taken} | Path Cost = {cur_cost}"
+        if t_ms is not None:
+            empirical += f"  |  Runtime={t_ms:.0f} ms"
 
         # deltas (relative to previous state)
         cur_frontier_set = set(fr_nodes)
@@ -705,7 +772,6 @@ class MazeViz:
             action_text = "no unvisited neighbors -> dead end."
         elif action == 'goal':
             action_text = f"reached GOAL {GOAL}."
-        # --- Dijkstra micro-steps ---
         elif action == 'pop_min':
             action_text = "extract-min from PQ."
         elif action == 'relax':
@@ -713,9 +779,9 @@ class MazeViz:
             action_text = f"relax (decrease-key) → push/update: {nbrs_str}"
         elif action == 'stale_pop':
             action_text = "discard stale PQ entry."
-        # ----------------------------
         else:
             action_text = action
+
         deltas = []
         s1 = self.fmt_add("frontier", add_frontier, max_items=6)
         s2 = self.fmt_add("visited",  add_visited,  max_items=8)
@@ -723,18 +789,12 @@ class MazeViz:
         for s in (s1,s2,s3):
             if s: deltas.append(s)
         delta_line = " | ".join(deltas) if deltas else "(no changes)"
-        data_line = f"frontier={len(fr_nodes)}, visited={len(visited)}"
-        sections = [("WHERE", where), ("ACTION", action_text), ("Δ", delta_line), ("DATA", data_line)]
-        # Insert COST section if weighted maze
-        if self.maze_name.startswith("Weighted") and cost_panel_line:
-            sections.append(("COST", cost_panel_line))
-        if totals_text:
-            sections.append(("TOTAL", totals_text))
+        sections = [("WHERE", where), ("ACTION", action_text), ("Δ", delta_line), ("OPERATIONS", empirical)]
         kind = ('ok' if action=='goal' else ('warn' if action=='deadend' else 'info'))
         self.set_message(sections, kind=kind)
 
-        line = self._which_line(state['algo'], state, finished)
-        self._draw_code_panel(state['algo'], current_line=line)
+        line = self.highlight_pseudocode(state['algo'], state, finished)
+        self._draw_pseudocode_panel(state['algo'], current_line=line)
         self.fig.canvas.draw_idle()
 
     # ----------------- keys
@@ -778,129 +838,266 @@ class MazeViz:
         small_screen = (fig_h_px < 800 or fig_w_px < 1200)
 
         if aspect >= 1.5:  # wide
-            left_rect  = [0.05, 0.10, 0.32, 0.80]
+            code_rect  = [0.05, 0.34, 0.32, 0.56]
+            left_rect  = [0.05, 0.10, 0.32, 0.20]
             maze_rect  = [0.45, 0.22, 0.46, 0.60]
         elif 1.15 <= aspect < 1.5:  # medium
-            left_rect  = [0.04, 0.10, 0.36, 0.80]
+            code_rect  = [0.04, 0.34, 0.36, 0.56]
+            left_rect  = [0.04, 0.10, 0.36, 0.20]
             maze_rect  = [0.43, 0.22, 0.50, 0.58]
         else:  # narrow/tall
-            left_rect  = [0.05, 0.05, 0.90, 0.30]
-            maze_rect  = [0.08, 0.44, 0.84, 0.50]
+            code_rect  = [0.05, 0.62, 0.90, 0.22]
+            left_rect  = [0.05, 0.05, 0.90, 0.20]
+            maze_rect  = [0.08, 0.30, 0.84, 0.26]
 
         msg_rect    = [maze_rect[0], maze_rect[1] + maze_rect[3] + 0.012,
-                       maze_rect[2], 0.16 if small_screen else 0.12]
+                       maze_rect[2], 0.18 if small_screen else 0.16]
         legend_h    = 0.045
         legend_rect = [maze_rect[0], max(0.04, maze_rect[1] - (legend_h + 0.012)),
                        maze_rect[2], legend_h]
 
-        self.left_ax.set_position(left_rect)
+        self.pseudocode_panel.set_position(code_rect)
+        self.instructions_panel.set_position(left_rect)
         self.ax.set_position(maze_rect)
         self.msg_ax.set_position(msg_rect)
         self.legend_ax.set_position(legend_rect)
 
-        # keep status lines where we expect them
-        self.info_text.set_position((0.02, 0.34))
-        self.cost_text.set_position((0.02, 0.31))
+        # keep instructions text aligned inside instruction panel
+        self.instruction_text.set_position((0.02, 0.48))
 
         msg_px = fig_w_px * msg_rect[2]
         self.wrap_cols = max(42, min(120, int(msg_px / 8.4)))
         self.msg_fs = (9.6 if small_screen else 10.2) + 0.0020 * msg_px
-        self.help_text.set_fontsize(self.msg_fs - (1.0 if small_screen else 0.8))
+
+        self.instruction_text.set_fontsize(self.msg_fs - (1.0 if small_screen else 0.8))
+
         self.line_spacing = 0.18 if small_screen else 0.20
 
         self.draw_custom_legend()
-        if self.last_state is None and not initial:
-            self.update_overlay(None)
-        elif self.last_state is not None:
-            cur_state = self.history[self.hist_idx] if 0 <= self.hist_idx < len(self.history) else self.last_state
-            finished = (self.exhausted and self.hist_idx == len(self.history)-1) or cur_state.get('action')=='goal'
-            self.prev_sets = self._sets_from_state(self.history[self.hist_idx-1] if self.hist_idx-1 >= 0 else None)
-            self.update_overlay(cur_state, finished=finished)
-
-        self.fig.canvas.draw_idle()
 
     # ---------- pseudocode blocks & highlighting ----------
     def _init_code_blocks(self):
-        self.PSEUDOCODE = {
-            'DFS': [
-                "push(start)                      # stack = LIFO",
-                "visited = ∅; parent[start]=None",
-                "while stack not empty:",
-                "    u = pop()                    # remove last",
-                "    if u == goal: break",
-                "    if u ∉ visited:",
-                "        visited.add(u)",
-                "        for v in neighbors(u):",
-                "            if v ∉ visited and v ∉ stack:",
-                "                parent[v] = u; push(v)",
-            ],
-            'BFS': [
-                "enqueue(start)                   # queue = FIFO, layer 0",
-                "visited = {start}; parent[start]=None",
-                "while queue not empty:",
-                "    u = dequeue()                # remove front",
-                "    if u == goal: break",
-                "    for v in neighbors(u):",
-                "        if v ∉ visited:",
-                "            visited.add(v)       # discover next layer",
-                "            parent[v] = u; enqueue(v)",
-            ],
-            'Dijkstra': [
-                "push(0,start)  # PQ on cost",
-                "dist[start]=0; parent[start]=None",
-                "while PQ not empty:",
-                "    (du,u) = pop_min()",
-                "    if u == goal: break",
-                "    for v in neighbors(u):",
-                "        nd = du + cost(v)",
-                "        if nd < dist[v]:",
-                "            dist[v]=nd; parent[v]=u; push(nd,v)",
-            ],
-        }
+            self.PSEUDOCODE = {
+                'DFS': [
+                    "stack =[start]                     ",
+                    "visited = {null set}; parent[start]=None",
+                    "-------------------------------------------",
+                    "while stack not empty:",
+                    "    current = stack.pop()         # remove top            ",
+                    "    if current == goal: break",
+                    "    if current in visited: continue",
+                    "    visited.add(current)",
+                    "    for neighbor in neighbors(current):",
+                    "        if neighbour not in visited:",
+                    "            parent[neighborr] = current",
+                    "            push(neighbor) to stack",
+                    "",
+                ],
+                'BFS': [
+                    "queue = [start]                  ",
+                    "visited = {start}; parent[start]=None",
+                    "",
+                    "while queue not empty:",
+                    "    current = queue.pop(0)             # remove left=most",
+                    "    if current == goal: break",
+                    "    for neighbor in neighbors(current):       ",   
+                    "        if v not in visited:",
+                    "            visited.add(neighbor)       ",
+                    "            parent[neighbor] = current",
+                    "            queue.enqueue(neighbor)",
+                    "",
+                ],
+                'Dijkstra': [
+                    "pq = [(0, start)]            # entry: (cost_from_start, node)",
+                    "dist[start]=0; parent[start]=None",
+                    "-- #dist(neighbor) = infinity --",
+                    "while pq not empty:",
+                    "    current_cost, current = pop_min(pq)",
+                    "    if current == goal: break",
+                    "    for neighbor in neighbors(current):",
+                    "        new_cost = current_cost + cost(neighbor)",
+                    "        if new_cost < dist[neighbor]:",
+                    "            dist[neighbor] = new_cost",
+                    "            parent[neighbor] = current; enqueue(new cost,neighbor)",
+                    "",
+                ],
+            }
+            self.map_pc = {
+                'DFS': {
+                    'init': 0,
+                    'pop': 4,
+                    'visit': 7,
+                    'consider': 8,
+                    'push': 11,
+                    'deadend': 8,
+                    'goal': 5,
+                },
+                'BFS': {
+                    'init': 0,
+                    'pop': 4,
+                    'consider': 6,
+                    'push': 10,
+                    'deadend': 6,
+                    'goal': 5,
+                },
+                'Dijkstra': {
+                    'init': 1,
+                    'pop_min': 4,
+                    'stale_pop': 4,
+                    'consider': 6,
+                    'relax': 9,
+                    'deadend': 6,
+                    'goal': 5,
+                },
+            }
 
-    def _draw_code_panel(self, algo, current_line=None):
-        for a in getattr(self, "code_text_artists", []):
-            try: a.remove()
-            except Exception: pass
-        self.code_text_artists = []
-        if self.code_highlight is not None:
-            try: self.code_highlight.remove()
-            except Exception: pass
+            self.code_text_artists = []
             self.code_highlight = None
 
-        lines = self.PSEUDOCODE.get(algo, [])
-        ax = self.left_ax
-        x0, y0 = 0.02, 0.98
-        dy = 0.06
+    def highlight_pseudocode(self, algo, state, finished):
+        action = state.get('action') if state else None
+        if finished or action == 'goal':
+            action = 'goal'
+        return self.map_pc.get(algo, {}).get(action, 0) + getattr(self, "pc_offset", 0)
+    
+    def _get_frontier_preview_lines(self):
+        """
+        Fix block DFS:4 lines, BFS: 1 line, Dijkstra: 1 line, so highlight_pseudocode stable.
+        """
+        state = getattr(self, "last_state", None)
+        algo = self.algo_name
 
-        if current_line is not None and 0 <= current_line < len(lines):
-            y_bar = y0 - dy * current_line - dy*0.85
-            self.code_highlight = ax.add_patch(
-                Rectangle((x0-0.01, y_bar), 0.94, dy*0.9,
-                          transform=ax.transAxes, facecolor='#FFF7CC',
-                          edgecolor='#E6D58E', linewidth=0.6, zorder=0)
-            )
+        if state is None:
+            if algo == 'DFS':
+                return [
+                    "stack (top)",
+                    "    —",
+                    "    —",
+                    "    —",
+                ]
+            elif algo == 'BFS':
+                return [
+                    "queue = [ ]   # front = left-most"
+                ]
+            elif algo == 'Dijkstra':
+                return [
+                    "pq = [ ]   # min_cost first"
+                ]
+            return []
 
-        fs = max(8, self.msg_fs-1)
-        for i, s in enumerate(lines):
+        frontier = state.get('frontier', [])
+
+        if algo == 'DFS':
+            # Show top of stack first, vertically
+            items = list(frontier)[-3:]              # keep only last 3 pushed
+            shown = [str(x) for x in reversed(items)]  # top appears first
+            while len(shown) < 3:
+                shown.append("—")
+
+            return [
+                "stack (top)",
+                f"    {shown[0]}",
+                f"    {shown[1]}",
+                f"    {shown[2]}",
+            ]
+
+        elif algo == 'BFS':
+            # Show first 3 queue items, front on the left
+            items = list(frontier)[:3]
+            if items:
+                return [f"queue = {items}   # front = left"]
+            return ["queue = [ ]   # front = left"]
+
+        elif algo == 'Dijkstra':
+            # Frontier is already a heap-like list of (cost, node) tuples
+            items = list(frontier)[:3]
+            if items:
+                return [f"pq = {items}   # min first"]
+            return ["pq = [ ]   # min first"]
+
+        return []
+
+    def _draw_pseudocode_panel(self, algo, current_line=None):
+        ax = self.pseudocode_panel
+         # remove old texts
+        for t in getattr(self, "code_text_artists", []):
+            try:
+                t.remove()
+            except Exception:
+                pass
+        self.code_text_artists = []
+        # remove old highlight rectangle
+        if getattr(self, "code_highlight", None) is not None:
+            try:
+                self.code_highlight.remove()
+            except Exception:
+                pass
+            self.code_highlight = None
+        # fixed preview block
+        preview_data_structure_lines = self._get_frontier_preview_lines()
+        # stable offset: preview block + `1 spacer line
+        self.pc_offset = len(preview_data_structure_lines) + 1
+        base_lines = (
+            preview_data_structure_lines
+            + [""]  # spacer line
+            + list(self.pc_sets.get(algo, []))
+        )
+        base_lines.append(f"Algorithm: {self.algo_name}   Maze: {self.maze_name}")
+
+        fs = max(8, self.msg_fs - 1)
+        n = len(base_lines)
+        y0 = 0.97
+        bottom_margin = 0.06
+        dy = min(0.066, (y0 - bottom_margin) / max(1, n))
+
+        highlighted_text = None
+
+        for i, s in enumerate(base_lines):
             y = y0 - dy * i
-            if y < 0.30: break
-            t = ax.text(x0, y, s, transform=ax.transAxes,
-                        va='top', ha='left', family='monospace', fontsize=fs)
+            if i < len(preview_data_structure_lines):
+                color = "#439AF0"
+            else:
+                color = '#708238' if '#' in s else 'black'
+
+            t = ax.text(
+                0.02, y, s,
+                transform=ax.transAxes,
+                va='center', ha='left',
+                color=color,
+                family='monospace',
+                fontsize=fs,
+                zorder=3)
+
             self.code_text_artists.append(t)
 
-        self.fig.canvas.draw_idle()
+            if current_line is not None and i ==current_line:
+                highlighted_text = t
+                    # draw highlight rectangle behind selected line
+        
+        if highlighted_text is not None:
+            self.fig.canvas.draw()
+            renderer = self.fig.canvas.get_renderer()
+            bbox = highlighted_text.get_window_extent(renderer=renderer)
 
-    def _which_line(self, algo, state, finished):
-        a = state.get('action') if state else None
-        if finished or a == 'goal': return 4
-        if algo == 'DFS':
-            return {'init':0,'pop':3,'visit':6,'consider':7,'push':9,'deadend':7}.get(a,3)
-        if algo == 'BFS':
-            return {'init':0,'pop':3,'consider':5,'push':8,'deadend':5}.get(a,3)
-        if algo == 'Dijkstra':
-            return {'init':0, 'pop_min':3, 'consider':6, 'relax':8, 'stale_pop':3, 'deadend':5}.get(a, 3)
-        return 6 if a == 'expand' else (5 if a=='deadend' else 3)
+            inv = ax.transAxes.inverted()
+            (x0, y0_ax) = inv.transform((bbox.x0, bbox.y0))
+            (x1, y1_ax) = inv.transform((bbox.x1, bbox.y1))
+
+            pad_x = 0.008
+            pad_y = 0.006
+
+            from matplotlib.patches import Rectangle
+            self.code_highlight = Rectangle(
+                (x0 - pad_x, y0_ax - pad_y),
+                (x1 - x0) + 2 * pad_x,
+                (y1_ax - y0_ax) + 2 * pad_y,
+                transform=ax.transAxes,
+                facecolor='#FFF59D',
+                edgecolor='none',
+                alpha=0.85,
+                zorder=1
+            )
+            ax.add_patch(self.code_highlight)
 
 
 if __name__ == '__main__':

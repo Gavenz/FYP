@@ -1,0 +1,235 @@
+def gen_dfs(start, goal):
+    stack = [start]
+    visited = set()
+    parent = {start: None}
+
+    yield state("init", start)
+
+    while stack:
+        u = stack.pop()
+        yield state("pop", u)
+
+        if u == goal:
+            yield state("goal", u)
+            return
+
+        if u in visited:
+            continue
+
+        visited.add(u)
+        yield state("visit", u)
+
+        for v in neighbors(u):
+            yield state("consider", u, v)
+
+            if v not in visited:
+                parent[v] = u
+                stack.append(v)
+                yield state("push", u, v)
+
+        if no_valid_neighbors:
+            yield state("deadend", u)
+
+import collections
+def gen_bfs(start, goal):
+    q = deque([start])
+    visited = {start}
+    parent = {start: None}
+
+    yield state("init", start)
+
+    while q:
+        u = q.popleft()
+        yield state("pop", u)
+
+        if u == goal:
+            yield state("goal", u)
+            return
+
+        for v in neighbors(u):
+            yield state("consider", u, v)
+
+            if v not in visited:
+                visited.add(v)
+                parent[v] = u
+                q.append(v)
+                yield state("push", u, v)
+
+import heapq
+
+def gen_dijkstra(start, goal):
+
+    # initialise distance and parent dictionaries
+    dist = {}
+    parent = {}
+
+    # set all cells to infinity initially
+    for cell in all_cells():               # e.g. (0,0), (1,0), (2,0), ...
+        dist[cell] = float("inf")          # dist = {(0,0):∞, (1,0):∞, (2,0):∞, (3,0):∞, ...}
+        parent[cell] = None                # parent = {(0,0):None, (1,0):None, (2,0):None, ...}
+
+    dist[start] = 0                       # dist = {(0,0):0, (1,0):∞, (2,0):∞, (3,0):∞, ...}
+    pq = [(0, start)]                     # priority queue storing (cost, cell)
+    while pq:                               
+
+        current_cost, current = heapq.heappop(pq) #lowest cumulative cost is dequeued
+
+        if current == goal:
+            return parent, dist
+        # if current !=goal:
+        for neighbour in neighbours(current):
+            if passable(neighbour):
+                # cost of entering neighbour cell
+                new_cost = current_cost + cell_cost(neighbour) #cell_cost can be (1 or 4)
+                
+                if new_cost < dist[neighbour]:
+                    dist[neighbour] = new_cost
+                    parent[neighbour] = current
+                    # Example update:
+                    # dist[(1,0)] = 1
+                    # parent[(1,0)] = (0,0)
+                    heapq.heappush(pq, (new_cost, neighbour))
+
+def solve(board):
+        #-Base Case -
+        # find next empty cell in board, if there are no empty cell, return solve(board) = True
+        pos = select_empty_cell(board)
+        if pos is None:
+            return True
+
+        r,c = pos #row, column of selected empty cell
+        
+        #-Recursive Case-
+        # generate possible candidate digits for the empty cell by checking constraints
+        cands = candidates_for(board, r, c)
+
+        
+        for d in cands:
+
+            # place the candidate digit on the board
+            board[r][c] = d
+
+            # recursively attempt to solve the rest
+            if solve(board):
+                return True
+            else: #solve(board) returns False, backtracks 
+                board[r][c] = 0
+        
+        return False
+
+def solve(board):
+    # stack to store previous decisions:
+    # entry: (row, col, allowed_candidates, next_candidate_index)
+    decision_stack = []                         
+
+    while count_empty_cells(board) > 0:
+        
+        # select next empty cell
+        pos = select_empty_cell(board)
+        r,c = pos
+        # generate possible candidates
+        cands = candidates_for(board, r, c)
+        #index of next candidate to try
+        next_cand_index = 0
+
+        while True:
+            # all candidates have been tried then backtrack
+            if next_cand_index == len(cands):
+                
+                #if backtrack all the way to the first decision and is empty now, means puzzle is unsolvable
+                if not decision_stack:
+                    return False
+
+                # restore previous decision state
+                r, c, cands, next_cand_index = decision_stack.pop()
+
+                # remove previously placed digit if any
+                board[r][c] = 0
+                continue
+
+            # select the next candidate digit    
+            cand = cands[next_cand_index]
+            next_idx += 1
+
+            # Place candidate digit
+            board[r][c] = cand
+
+            # Save current decision state for backtracking
+            decision_stack.append((r, c, cands, next_cand_index))
+
+            # Move forward to next empty cell
+            break
+
+    # No empty cells remain → puzzle solved
+    return True
+
+def solve_steps(board):
+    pos = select_cell(board)
+    if pos is None:
+        yield state("solved")
+        return
+
+    r, c = pos
+    for d in candidates_for(board, r, c):
+        ok, reason = check_reason(board, r, c, d)
+
+        if not ok:
+            continue
+
+        board[r][c] = d
+        yield state("place", r, c, d)
+
+        yield from solve_steps(board)
+
+        board[r][c] = 0
+        yield state("backtrack", r, c)
+
+
+def step():
+    if phase == "heapify":
+        arr, active, secondary = next_heapify_step()
+        return state("heapify", arr, active, secondary)
+
+    elif phase == "insert":
+        arr, active, secondary = next_insert_step()
+        return state("insert", arr, active, secondary)
+
+    elif phase == "delete":
+        arr, active, secondary = next_delete_step()
+        return state("delete", arr, active, secondary)
+
+    elif phase == "place_word":
+        word, position = choose_best_placement()
+        place_word_on_grid(word, position)
+        return state("placement", grid)
+
+    elif phase == "fill":
+        fill_remaining_cells()
+        return state("done", grid)
+    
+
+def step(self):
+    if self.mode == "seek_start":
+        r, c = self.starts.pop(0)
+        ch = self.grid[r][c]
+
+        if self.trie.has_prefix(ch):
+            self._push(r, c)
+            self.mode = "dfs"
+            return state("explore", path=self.path, prefix=self.pref)
+
+    if self.mode == "dfs":
+        if self.trie.is_word(self.pref):
+            return state("found_word", word=self.pref, path=self.path)
+
+        for rr, cc in neighbors_of_top():
+            candidate = self.pref + self.grid[rr][cc]
+
+            if self.trie.has_prefix(candidate) is None:
+                return state("reject", prefix=candidate, probe=(rr, cc))
+
+            self._push(rr, cc)
+            return state("explore", path=self.path, prefix=self.pref)
+
+        self._pop()
+        return state("backtrack", path=self.path, prefix=self.pref)
