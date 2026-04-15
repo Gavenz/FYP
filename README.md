@@ -4,7 +4,11 @@
 This repository contains **interactive, visual puzzle games** designed to help students taking IE2108 to learn key DSAI concepts through playing puzzle games and respective functions like: step-by-step execution, pseudocode and visualisation panels.  
 
 ---
-🎥 Watch 2-minute demo: (LINK)
+🎥 Watch 3-minute demo: 
+
+https://github.com/user-attachments/assets/ff94cc6b-62b8-45d0-99a6-da52eea9c198
+
+
 ## 🎮 Included Games
 
 - **Maze**  
