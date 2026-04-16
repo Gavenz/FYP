@@ -6,11 +6,6 @@
 - `cell_cost` — Returns traversal cost for a terrain cell using the cost table.
 - `new_counters` — Creates the operation-counter dictionary used to track algorithm actions.
 - `graph_sizes` — Computes approximate passable vertex/edge counts for the active maze graph.
-- `_neighbors_cells` — Yields adjacent logical maze-carving cells with movement deltas.
-- `generate_tree_maze_grid` — Builds a perfect maze using DFS backtracking on a cell lattice.
-- `add_loops` — Opens selected walls between corridors to introduce graph cycles.
-- `add_mud_at_junctions` — Converts selected open cells to weighted mud tiles to alter path costs.
-- `deep_copy_grid` — Produces a structural copy of a maze grid.
 - `set_maze` — Loads a maze variant, enforces borders, and reinitializes start/goal openings.
 - `in_bounds` — Checks whether a coordinate lies inside maze dimensions.
 - `passable` — Tests whether a maze coordinate is not a wall.
@@ -18,16 +13,15 @@
 - `gen_dfs` — Emits stepwise DFS state snapshots for instructional playback.
 - `gen_bfs` — Emits stepwise BFS state snapshots for instructional playback.
 - `gen_dijkstra` — Emits stepwise Dijkstra state snapshots including distance/relaxation behavior.
-- `MazeViz.reconstruct_path` — Rebuilds a route from parent links to show solution path.
-- `MazeViz.path_cost` — Computes total weighted cost of a candidate path.
-- `MazeViz.depth_of` — Computes node depth from parent links for display metrics.
 
 ### Visualisation Module
 - `MazeViz` — Owns matplotlib figure/axes and renders maze, overlays, pseudocode, and legend views.
 - `MazeViz.__init__` — Constructs the visualization layout, artists, state caches, and event bindings.
 - `MazeViz.draw_custom_legend` — Draws the compact legend describing cell/overlay color meanings.
 - `MazeViz.draw_static_maze` — Paints terrain tiles plus start/goal glyphs on the maze axis.
-- `MazeViz._snapshot` — Captures a restorable visualization+state snapshot for undo/redo behavior.
+- `MazeViz.reconstruct_path` — Rebuilds a route from parent links to show solution path.
+- `MazeViz.path_cost` — Computes total weighted cost of a candidate path.
+- `MazeViz.depth_of` — Computes node depth from parent links for display metrics.
 - `MazeViz._sets_from_state` — Derives parent/visited/path/frontier sets from current algorithm state.
 - `MazeViz.draw_graph_overlay` — Draws dynamic frontier/visited/current/path overlays on the maze.
 - `MazeViz._draw_section` — Draws formatted text blocks in the left instructional panel.
@@ -43,6 +37,7 @@
 - `MazeViz._instruction_message` — Provides the keyboard-help instruction string for users.
 - `MazeViz.set_algo` — Switches algorithm mode and resets run state for the new selection.
 - `MazeViz.cycle_maze` — Cycles among maze presets and resets the run context.
+- `MazeViz._snapshot` — Captures a restorable visualization+state snapshot for undo/redo behavior.
 - `MazeViz._msg_clear` — Resets message panel text and per-step emphasis.
 - `MazeViz.set_message` — Writes status/action feedback into the top message panel.
 - `MazeViz.fmt_add` — Formats optional status text fragments for display strings.
