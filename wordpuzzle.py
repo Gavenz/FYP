@@ -31,6 +31,7 @@ def canon(word: str) -> str: return min(word, word[::-1])
 
 # -------------------------
 # Grid ops
+# Algorithm Engine
 # -------------------------
 def fits_and_overlap(grid, word, r, c, dr, dc):
     overlap, cells = 0, []
@@ -56,6 +57,7 @@ def fill_random(grid):
                 grid[r][c] = random.choice(letters)
 
 # -------------------------
+# Algorithm Engine
 # Heap-guided generation (priority queue)
 # -------------------------
 def best_placement(grid, word):
@@ -201,6 +203,7 @@ def pop_with_snapshots(heap_arr):
 
 
 class HeapGenerator:
+    # Algorithm Engine: emits stepwise generation states for teaching.
     """
     build_heap -> pop_word -> show_delete (animated on tree) ->
     choose_placement -> commit -> (repeat) -> fill -> done
@@ -540,6 +543,7 @@ def build_trie(words):
     return t
 
 class GlobalDFSSolver:
+    # Algorithm Engine: trie-guided DFS solver that yields state snapshots.
     """
     Start from every cell once; DFS with trie pruning.
     Records canonical words; stops early when all canon targets found.
@@ -747,6 +751,7 @@ class GlobalDFSSolver:
 # Visualization
 # -------------------------
 class Viz:
+    # Visualisation Module: all matplotlib drawing routines.
     def __init__(self):
         self.fig = plt.figure(figsize=(13.5, 8.2))
         self.fig.canvas.mpl_connect('close_event', lambda e: sys.exit(0))
@@ -1118,6 +1123,7 @@ class Viz:
 # Controller (state + undo history)
 # -------------------------
 class Controller:
+    # UI / Controller Module: input events, autoplay loop, undo/restart orchestration.
     def __init__(self, fig):
         self.fig = fig
         self.step_flag = False

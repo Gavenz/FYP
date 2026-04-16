@@ -41,7 +41,8 @@ PUZZLE = [
     [7,0,3, 0,1,8, 0,0,0],
 ]
 
-# ---------- Core helpers ----------
+# ---------- Algorithm Engine ----------
+# Core helpers
 def count_empty(board):
     return sum(1 for r in range(9) for c in range(9) if board[r][c] == 0)
 
@@ -69,7 +70,8 @@ def check_reason(board, r, c, d):
 def candidates_for(board, r, c):
     return [d for d in range(1,10) if check_reason(board, r, c, d)[0]]
 
-# ---------- Event generator (unchanged recursive; stable) ----------
+# ---------- Algorithm Engine ----------
+# Event generator (unchanged recursive; stable)
 def solve_steps(board, select_cell=select_cell_first_empty):
     def _solve(depth=0):
         k = count_empty(board)
@@ -115,6 +117,7 @@ def generate_event_trace(puzzle, select_cell=select_cell_first_empty):
     return list(solve_steps(copy.deepcopy(puzzle), select_cell))
 
 # ---------- Viz ----------
+    # This class combines Visualisation + UI / Controller for demo simplicity.
 class SudokuTeachViz:
     def __init__(self, puzzle):
         self.orig  = copy.deepcopy(puzzle)
@@ -252,7 +255,7 @@ class SudokuTeachViz:
         self._init_buttons_under_grid()
         self.new_run()
 
-    # ---- Pseudocode drawing & highlighting
+    # ---- Visualisation Module: pseudocode drawing & highlighting
     def _draw_pseudocode(self):
         # clear old texts
         for artist in getattr(self, "pc_texts", []):
@@ -302,6 +305,7 @@ class SudokuTeachViz:
         self.fig.canvas.draw_idle()
 
     # ---- Buttons under grid (figure coords) ----
+    # ---- UI / Controller Module: button bindings
     def _init_buttons_under_grid(self):
         gb = self.ax_grid.get_position(self.fig)
         h = 0.06
@@ -330,6 +334,7 @@ class SudokuTeachViz:
         self.btn_reset.on_clicked(self.on_reset)
 
     # ---- Draw helpers ----
+    # ---- Visualisation Module: grid + overlays
     def draw_numbers(self):
         for r in range(9):
             for c in range(9):
@@ -449,6 +454,7 @@ class SudokuTeachViz:
         self.last_try_index.clear()
         self.for_i = 0
 
+    # ---- UI / Controller Module: run lifecycle
     def new_run(self):
         self.events = generate_event_trace(self.orig)
         self.reset_visual_state_only()
@@ -576,6 +582,7 @@ class SudokuTeachViz:
         self.highlight_pc(pc_idx)
         return pc_idx, self.left_info.get_text(), k
 
+    # ---- Visualisation Module: apply engine event to current frame
     def apply_event(self, event):
         et = event['type']
         if et in ('base_case','solved'):
@@ -614,6 +621,7 @@ class SudokuTeachViz:
         return self.describe_event(event)
 
     # ---- Buttons ----
+    # ---- UI / Controller Module: event handlers
     def on_next(self, _):
         nxt = self.index + 1
         if nxt >= len(self.events):

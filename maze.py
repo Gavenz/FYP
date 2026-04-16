@@ -47,96 +47,37 @@ def graph_sizes():
     return V, E
 
 # --------------------------------------------------------------------------------------
+# Algorithm Engine
 # Utility: generate a 12x12 perfect (tree) maze + a weighted/loopy variant
 # --------------------------------------------------------------------------------------
-def _neighbors_cells(cx, cy, cw, ch):
-    for dx, dy in ((1,0),(-1,0),(0,1),(0,-1)):
-        nx, ny = cx+dx, cy+dy
-        if 0 <= nx < cw and 0 <= ny < ch:
-            yield nx, ny, dx, dy
-
-
-def generate_tree_maze_grid(W=12, H=12, seed=42):
-    """
-    Return a WxH grid (list[list[int]]), 1=wall, 0=open, perfect maze (no loops).
-    Uses DFS backtracker over a cell grid of size cw x ch where cw=(W-1)//2.
-    """
-    rng = random.Random(seed)
-    G = [[1 for _ in range(W)] for _ in range(H)]
-    cw, ch = (W - 1) // 2, (H - 1) // 2
-    start_cx, start_cy = cw // 2, 0
-
-    visited = [[False]*ch for _ in range(cw)]
-    stack = [(start_cx, start_cy)]
-    visited[start_cx][start_cy] = True
-
-    def open_cell(cx, cy):
-        xw, yw = 2*cx + 1, 2*cy + 1
-        G[yw][xw] = 0
-
-    open_cell(start_cx, start_cy)
-
-    while stack:
-        cx, cy = stack[-1]
-        nbrs = [(nx, ny, dx, dy) for nx, ny, dx, dy in _neighbors_cells(cx, cy, cw, ch) if not visited[nx][ny]]
-        if not nbrs:
-            stack.pop(); continue
-        nx, ny, dx, dy = rng.choice(nbrs)
-        xw, yw = 2*cx + 1, 2*cy + 1
-        xw2, yw2 = 2*nx + 1, 2*ny + 1
-        xm, ym = (xw + xw2)//2, (yw + yw2)//2
-        G[ym][xm] = 0
-        G[yw2][xw2] = 0
-        visited[nx][ny] = True 
-        stack.append((nx, ny))
-
-    return G
-
-
-def add_loops(G, openings=8, seed=7):
-    """Open 'openings' random walls that sit between two open cells (to create loops)."""
-    rng = random.Random(seed)
-    H = len(G); W = len(G[0])
-    candidates = []
-    for y in range(1, H-1):
-        for x in range(1, W-1):
-            if G[y][x] != 1: continue
-            horiz = (G[y][x-1] != 1 and G[y][x+1] != 1)
-            vert  = (G[y-1][x] != 1 and G[y+1][x] != 1)
-            if horiz or vert:
-                candidates.append((x,y))
-    rng.shuffle(candidates)
-    for (x,y) in candidates[:openings]:
-        G[y][x] = 0
-
-
-def add_mud_at_junctions(G, prob_at_branch=0.55, prob_center_band=0.35, seed=9):
-    """
-    Convert some open cells (0) to mud (2), biased towards junctions (deg>=3)
-    and towards a central vertical band to encourage alternative detours.
-    """
-    rng = random.Random(seed)
-    H = len(G); W = len(G[0]); cx = W // 2
-    for y in range(1, H-1):
-        for x in range(1, W-1):
-            if G[y][x] != 0: continue
-            deg = sum(G[y+dy][x+dx] != 1 for dx,dy in ((1,0),(-1,0),(0,1),(0,-1)))
-            p = 0.0
-            if deg >= 3: p += prob_at_branch
-            if abs(x - cx) <= 1: p += prob_center_band
-            if rng.random() < min(0.85, p):
-                G[y][x] = 2  # mud
-
-
-def deep_copy_grid(src):
-    return [row[:] for row in src]
-
-
-# Build the two teaching mazes
-TREE12 = generate_tree_maze_grid(W=12, H=12, seed=123)   # perfect maze (hard, dead-ends)
-WEIGHTED12 = deep_copy_grid(TREE12)
-add_loops(WEIGHTED12, openings=10, seed=17)             # introduce cycles (alt routes)
-add_mud_at_junctions(WEIGHTED12, prob_at_branch=0.65, prob_center_band=0.40, seed=27)
+TREE12 = [
+	[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+	[1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1],
+	[1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 1],
+	[1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1],
+	[1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1],
+    [1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1],
+	[1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1],
+    [1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1],
+	[1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1],
+    [1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1],
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+	[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+	]
+WEIGHTED12 = [
+	[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+	[1, 0, 0, 0, 1, 2, 2, 2, 0, 0, 1, 1],
+	[1, 0, 2, 0, 1, 1, 1, 0, 1, 0, 1, 1],
+	[1, 0, 1, 2, 0, 0, 1, 0, 0, 0, 1, 1],
+	[1, 0, 0, 0, 1, 1, 1, 1, 2, 2, 1, 1],
+    [1, 0, 1, 0, 0, 2, 0, 2, 2, 0, 1, 1],
+	[1, 0, 1, 1, 1, 0, 1, 2, 2, 1, 1, 1],
+	[1, 2, 0, 0, 1, 0, 2, 0, 2, 0, 1, 1],
+	[1, 2, 2, 2, 2, 2, 1, 0, 1, 0, 1, 1],
+ 	[1, 0, 1, 0, 2, 2, 0, 0, 1, 0, 1, 1],
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    ]
 
 # Bank lets us cycle with 'L'
 MAZE_BANK = [
@@ -187,6 +128,7 @@ def neighbors(x, y):
 
 
 # --------------------------------------------------------------------------------------
+# Algorithm Engine
 # Generators (micro-steps for DFS/BFS so students see pushes/enqueues)
 # action ∈ {'init','pop','visit','consider','push','deadend','goal'}
 # --------------------------------------------------------------------------------------
@@ -318,6 +260,8 @@ def gen_dijkstra(start, goal):
 # --------------------------------------------------------------------------------------
 # Viz
 # --------------------------------------------------------------------------------------
+    # This class currently mixes Visualisation + UI / Controller logic.
+    # Kept as-is for low-risk refactor; a future split can extract controller handlers.
 class MazeViz:
     def __init__(self):
         self.fig = plt.figure(figsize=(10, 6.9))
@@ -421,7 +365,7 @@ class MazeViz:
                                            facecolor='none', edgecolor='#d0d7e2', linewidth=0.8))
         self.fig.canvas.draw_idle()
 
-    # ----------------- maze drawing
+    # ----------------- Visualisation Module: maze drawing
     def draw_static_maze(self):
         self.ax.clear()
         self.ax.set_aspect('equal'); self.ax.axis('off')
@@ -438,7 +382,7 @@ class MazeViz:
         self.ax.add_patch(Rectangle(GOAL, 1,1,facecolor='#FFF176',edgecolor='gray',linewidth=1.0,alpha=0.9))
         self.fig.canvas.draw_idle()
 
-    # ----------------- algorithm plumbing
+    # ----------------- UI / Controller Module: engine wiring + session control
     def set_algo(self, name):
         self.algo_name = name
         if name=='DFS': self.generator = gen_dfs(START, GOAL)
@@ -509,7 +453,7 @@ class MazeViz:
             'parents': set(s.get('parent', {}).keys())
         }
 
-    # ----------------- overlay drawing
+    # ----------------- Visualisation Module: overlay rendering + teaching text
     def draw_graph_overlay(self, parent, visited, frontier, current, path):
         for v in visited:
             p = parent.get(v)
@@ -577,7 +521,7 @@ class MazeViz:
         tail = "" if len(items) <= max_items else " ..."
         return f"{name} +{show}{tail}"
 
-    # ----------------- stepping / retract -----------------
+    # ----------------- UI / Controller Module: stepping / undo controls -----------------
     def step_once(self):
         if self.hist_idx + 1 < len(self.history):
             self.hist_idx += 1
@@ -618,7 +562,7 @@ class MazeViz:
         finished = (self.exhausted and self.hist_idx == len(self.history)-1) or state.get('action')=='goal'
         self.update_overlay(state, finished=finished)
 
-    # ----------------- core render
+    # ----------------- Visualisation Module: main render pass
     def update_overlay(self, state, finished=False):
         self.draw_static_maze()
         self.draw_custom_legend()
@@ -797,7 +741,7 @@ class MazeViz:
         self._draw_pseudocode_panel(state['algo'], current_line=line)
         self.fig.canvas.draw_idle()
 
-    # ----------------- keys
+    # ----------------- UI / Controller Module: keyboard events + autoplay
     def on_key(self, event):
         k = (event.key or '').lower()
         if k=='1':
