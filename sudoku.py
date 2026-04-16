@@ -340,10 +340,16 @@ class SudokuTeachViz:
         self.status_text.set_text(headline)
         self.left_info.set_text(info)
 
+    def set_cell_highlight_color(self, color):
+        self.cell_hl.set_facecolor(color)
+        self.cell_hl.set_edgecolor(color)
+
     def set_cell_highlight(self, cell):
         if cell is None: self.cell_hl.set_visible(False)
         else:
-            r,c = cell; self.cell_hl.set_xy((c,r)); self.cell_hl.set_visible(True)
+            r,c = cell; self.cell_hl.set_xy((c,r))
+            self.set_cell_highlight_color(CELL_HL_COLOR)   # always default to green
+            self.cell_hl.set_visible(True)
 
     def clear_conflicts(self):
         for p in self.conflict_patches: p.remove()
@@ -752,13 +758,19 @@ class SudokuTeachViz:
             self.clear_conflicts()
 
             if self.mode == 'Recur':
+                # keep current frame, but restore active-cell color back to green
+                self.set_cell_highlight((r, c))
+                self.set_cell_highlight_color(CELL_HL_COLOR)
+
                 if self.stack_frames and self.stack_frames[-1]['r'] == r and self.stack_frames[-1]['c'] == c:
                     self.stack_frames[-1]['d'] = None
                     self.stack_frames[-1]['ret'] = False
                     self.render_stack()
 
             elif self.mode == 'While':
-                # Pop exactly once from decision_stack
+                self.set_cell_highlight((r, c))
+                self.set_cell_highlight_color(CELL_HL_COLOR)
+
                 if self.stack_frames:
                     self.stack_frames.pop()
                     self.render_stack()
@@ -766,13 +778,18 @@ class SudokuTeachViz:
         elif et == 'dead_end':
             self.clear_conflicts()
 
+            # show current cell as red on dead-end
+            if 'cell' in event:
+                r, c = event['cell']
+                self.set_cell_highlight((r, c))
+                self.set_cell_highlight_color(CONFLICT_COLOR)
+
             if self.mode == 'Recur':
                 if self.stack_frames:
                     self.stack_frames[-1]['ret'] = False
                     self.render_stack()
                     self.stack_frames.pop()
                     self.render_stack()
-
             # While mode: do not pop here
             # dead_end is explanatory; actual stack change happens at backtrack
 
